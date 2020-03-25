@@ -180,3 +180,6 @@ _vizdoom*
 # Mac OS-specific storage files
 .DS_Store
 .nfs*
+
+old_Dockerfile
+Dockerfile
