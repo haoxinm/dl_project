@@ -20,6 +20,7 @@ pytest==3.4.2
 sacred
 jupyterlab
 ipykernel
-rtree  # add with conda install
+# rtree  # add with conda install
 gitpython
 moviepy
+visualpriors
