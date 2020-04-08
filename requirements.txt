@@ -3,17 +3,17 @@ scikit-image
 numpy
 torch
 torchvision
-gym
+gym==0.10.9
 # vizdoom  # not sure if really need
 torchsummary
 visdom
 ipdb
 sacred
 matplotlib
-tensorflow  # not sure if really needed
+tensorflow==1.15.2  # not sure if really needed
 psutil
 sklearn
-tensorboard
+tensorboard==1.15
 tensorboardX
 watchdog
 pytest==3.4.2
