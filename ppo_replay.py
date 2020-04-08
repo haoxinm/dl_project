@@ -3,7 +3,8 @@ import time
 from collections import deque
 
 import torch
-from habitat import logger
+import torch.nn as nn
+from habitat import Config, logger
 from habitat_baselines.common.env_utils import construct_envs
 from habitat_baselines.common.environments import get_env_class
 from habitat_baselines.common.rollout_storage import RolloutStorage
@@ -13,9 +14,11 @@ from habitat_baselines.common.utils import (
     linear_decay,
 )
 from habitat_baselines.common.baseline_registry import baseline_registry
+from habitat_baselines.rl.ppo import PPO
 from habitat_baselines.rl.ppo.ppo_trainer import PPOTrainer
 from torch.optim.lr_scheduler import LambdaLR
 from replay_buffer import RolloutReplayBuffer
+from efficientnet_policy import PointNavEfficientNetPolicy
 
 
 @baseline_registry.register_trainer(name="ppo_replay")
@@ -27,6 +30,79 @@ class PPOReplayTrainer(PPOTrainer):
     def insert_memory(self, memories):
         for rollout, reward, count in memories:
             self.memory.insert(rollout, reward, count)
+
+    def _setup_actor_critic_agent(self, ppo_cfg: Config) -> None:
+        r"""Sets up actor critic and agent for PPO.
+
+        Args:
+            ppo_cfg: config node with relevant params
+
+        Returns:
+            None
+        """
+        logger.add_filehandler(self.config.LOG_FILE)
+
+        self.actor_critic = PointNavEfficientNetPolicy(
+            observation_space=self.envs.observation_spaces[0],
+            action_space=self.envs.action_spaces[0],
+            hidden_size=ppo_cfg.hidden_size,
+            rnn_type=self.config.RL.PPO.rnn_type,
+            num_recurrent_layers=self.config.RL.PPO.num_recurrent_layers,
+            backbone=self.config.RL.PPO.backbone,
+            goal_sensor_uuid=self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID,
+            normalize_visual_inputs="rgb"
+                                    in self.envs.observation_spaces[0].spaces,
+            pretrained=self.config.RL.PPO.PRETRAINED,
+            finetune=self.config.RL.PPO.FINETUNE,
+        )
+        self.actor_critic.to(self.device)
+
+        if (
+            self.config.RL.PPO.pretrained_encoder
+            or self.config.RL.PPO.pretrained_actor
+        ):
+            pretrained_state = torch.load(
+                self.config.RL.PPO.pretrained_weights, map_location="cpu"
+            )
+
+        if self.config.RL.PPO.pretrained_actor:
+            self.actor_critic.load_state_dict(
+                {
+                    k[len("actor_critic.") :]: v
+                    for k, v in pretrained_state["state_dict"].items()
+                }
+            )
+        elif self.config.RL.PPO.pretrained_encoder:
+            prefix = "actor_critic.net.visual_encoder."
+            self.actor_critic.net.visual_encoder.load_state_dict(
+                {
+                    k[len(prefix) :]: v
+                    for k, v in pretrained_state["state_dict"].items()
+                    if k.startswith(prefix)
+                }
+            )
+
+        if not self.config.RL.PPO.train_encoder:
+            self._static_encoder = True
+            for param in self.actor_critic.net.visual_encoder.parameters():
+                param.requires_grad_(False)
+
+        if self.config.RL.PPO.reset_critic:
+            nn.init.orthogonal_(self.actor_critic.critic.fc.weight)
+            nn.init.constant_(self.actor_critic.critic.fc.bias, 0)
+
+        self.agent = PPO(
+            actor_critic=self.actor_critic,
+            clip_param=ppo_cfg.clip_param,
+            ppo_epoch=ppo_cfg.ppo_epoch,
+            num_mini_batch=ppo_cfg.num_mini_batch,
+            value_loss_coef=ppo_cfg.value_loss_coef,
+            entropy_coef=ppo_cfg.entropy_coef,
+            lr=ppo_cfg.lr,
+            eps=ppo_cfg.eps,
+            max_grad_norm=ppo_cfg.max_grad_norm,
+            use_normalized_advantage=ppo_cfg.use_normalized_advantage,
+        )
 
     def _update_agent_memory(self, ppo_cfg, rollouts):
         t_update_model = time.time()
@@ -58,6 +134,7 @@ class PPOReplayTrainer(PPOTrainer):
 
     def replay(self, num_updates, ppo_cfg, lr_scheduler, t_start, pth_time, writer,
                count_steps, count_checkpoints):
+        print(".....start memory replay for {} updates.....".format(num_updates))
         env_time = 0
         window_episode_reward = deque(maxlen=ppo_cfg.reward_window_size)
         window_episode_counts = deque(maxlen=ppo_cfg.reward_window_size)
