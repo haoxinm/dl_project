@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import tensorflow as tf
 
 torch.manual_seed(1)
 lin = nn.Linear(5, 3)  # maps from R^5 to R^3, parameters A, b
