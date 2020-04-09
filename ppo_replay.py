@@ -25,7 +25,7 @@ from efficientnet_policy import PointNavEfficientNetPolicy
 class PPOReplayTrainer(PPOTrainer):
     def __init__(self, config=None):
         super().__init__(config)
-        self.memory = RolloutReplayBuffer(config.RL.REPLAY.MEMORY_SIZE)
+        self.memory = RolloutReplayBuffer(config.REPLAY_MEMORY_SIZE)
 
     def insert_memory(self, memories):
         for rollout, reward, count in memories:

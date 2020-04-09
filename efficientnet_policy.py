@@ -1,14 +1,11 @@
-import numpy as np
 import torch
 import torch.nn as nn
-from habitat_baselines.common.utils import Flatten
+from efficientnet_pytorch.model import efficientnet
 from habitat_baselines.rl.ddppo.policy.running_mean_and_var import (
     RunningMeanAndVar,
 )
 from habitat_baselines.rl.models.rnn_state_encoder import RNNStateEncoder
 from habitat_baselines.rl.ppo import Net, Policy
-from efficientnet_pytorch.model import efficientnet
-import torchvision.transforms as transforms
 from torch.nn import functional as F
 
 
