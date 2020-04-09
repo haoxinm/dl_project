@@ -7,18 +7,23 @@ class RolloutReplayBuffer(object):
     def __init__(self, memory_size):
         self.memory_size = memory_size
         self.rollout_memory = deque(maxlen=memory_size)
-        self.reward_memory = deque(maxlen=memory_size)
-        self.count_memory = deque(maxlen=memory_size)
+        self.stat_memory = deque(maxlen=memory_size)
 
-    def insert(self, rollout, reward, count):
-        self.rollout_memory.append(deepcopy(rollout))
-        self.reward_memory.append(deepcopy(reward))
-        self.count_memory.append(deepcopy(count))
+    def insert(self, rollout, stat):
+        rollout = deepcopy(rollout)
+        rollout.to('cpu')
+        self.rollout_memory.append(rollout)
+        cpu_stat = dict()
+        for key, value in stat.items():
+            cpu_stat[key] = value.to('cpu')
+        self.stat_memory.append(cpu_stat)
 
     def recall(self, num):
         idxs = np.random.choice(len(self.rollout_memory), num)
         rollout_recalled = [self.rollout_memory[idx] for idx in idxs]
-        reward_recalled = [self.reward_memory[idx] for idx in idxs]
-        count_recalled = [self.count_memory[idx] for idx in idxs]
+        stat_recalled = [self.stat_memory[idx] for idx in idxs]
 
-        return rollout_recalled, reward_recalled, count_recalled
+        return rollout_recalled, stat_recalled
+
+    def __len__(self):
+        return len(self.rollout_memory)

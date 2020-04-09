@@ -200,7 +200,6 @@ class PointNavEfficientNetNet(Net):
                 visual_feats = self.visual_encoder(observations)
 
             x.append(visual_feats)
-
         tgt_encoding = self.get_tgt_encoding(observations)
         prev_actions = self.prev_action_embedding(
             ((prev_actions.float() + 1) * masks).long().squeeze(-1)

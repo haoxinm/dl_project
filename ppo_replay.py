@@ -1,10 +1,11 @@
 import os
 import time
-from collections import deque
-
+from collections import deque, defaultdict
+from apex import amp
 import torch
 import torch.nn as nn
 from habitat import Config, logger
+from habitat_baselines.common.baseline_registry import baseline_registry
 from habitat_baselines.common.env_utils import construct_envs
 from habitat_baselines.common.environments import get_env_class
 from habitat_baselines.common.rollout_storage import RolloutStorage
@@ -13,23 +14,24 @@ from habitat_baselines.common.utils import (
     batch_obs,
     linear_decay,
 )
-from habitat_baselines.common.baseline_registry import baseline_registry
 from habitat_baselines.rl.ppo import PPO
 from habitat_baselines.rl.ppo.ppo_trainer import PPOTrainer
 from torch.optim.lr_scheduler import LambdaLR
-from replay_buffer import RolloutReplayBuffer
+
 from efficientnet_policy import PointNavEfficientNetPolicy
+from replay_buffer import RolloutReplayBuffer
 
 
 @baseline_registry.register_trainer(name="ppo_replay")
 class PPOReplayTrainer(PPOTrainer):
+
     def __init__(self, config=None):
         super().__init__(config)
         self.memory = RolloutReplayBuffer(config.REPLAY_MEMORY_SIZE)
 
-    def insert_memory(self, memories):
-        for rollout, reward, count in memories:
-            self.memory.insert(rollout, reward, count)
+    def insert_memory(self, rollout, stat):
+        # for rollout, stat in memories:
+        self.memory.insert(rollout, stat)
 
     def _setup_actor_critic_agent(self, ppo_cfg: Config) -> None:
         r"""Sets up actor critic and agent for PPO.
@@ -91,7 +93,7 @@ class PPOReplayTrainer(PPOTrainer):
             nn.init.orthogonal_(self.actor_critic.critic.fc.weight)
             nn.init.constant_(self.actor_critic.critic.fc.bias, 0)
 
-        self.agent = PPO(
+        self.agent = PPOHalf(
             actor_critic=self.actor_critic,
             clip_param=ppo_cfg.clip_param,
             ppo_epoch=ppo_cfg.ppo_epoch,
@@ -121,9 +123,37 @@ class PPOReplayTrainer(PPOTrainer):
             next_value, ppo_cfg.use_gae, ppo_cfg.gamma, ppo_cfg.tau
         )
 
-        value_loss, action_loss, dist_entropy = self.agent.update(rollouts)
+        value_loss, action_loss, dist_entropy = self.agent.update(rollouts, self.config.FP16)
 
         # rollouts.after_update()
+
+        return (
+            time.time() - t_update_model,
+            value_loss,
+            action_loss,
+            dist_entropy,
+        )
+
+    def _update_agent(self, ppo_cfg, rollouts):
+        t_update_model = time.time()
+        with torch.no_grad():
+            last_observation = {
+                k: v[rollouts.step] for k, v in rollouts.observations.items()
+            }
+            next_value = self.actor_critic.get_value(
+                last_observation,
+                rollouts.recurrent_hidden_states[rollouts.step],
+                rollouts.prev_actions[rollouts.step],
+                rollouts.masks[rollouts.step],
+            ).detach()
+
+        rollouts.compute_returns(
+            next_value, ppo_cfg.use_gae, ppo_cfg.gamma, ppo_cfg.tau
+        )
+
+        value_loss, action_loss, dist_entropy = self.agent.update(rollouts, self.config.FP16)
+
+        rollouts.after_update()
 
         return (
             time.time() - t_update_model,
@@ -136,14 +166,18 @@ class PPOReplayTrainer(PPOTrainer):
                count_steps, count_checkpoints):
         print(".....start memory replay for {} updates.....".format(num_updates))
         env_time = 0
-        window_episode_reward = deque(maxlen=ppo_cfg.reward_window_size)
-        window_episode_counts = deque(maxlen=ppo_cfg.reward_window_size)
+        window_episode_stats = defaultdict(
+            lambda: deque(maxlen=ppo_cfg.reward_window_size)
+        )
         memories = self.memory.recall(num_updates)
         for update in range(num_updates):
-            rollouts, episode_rewards, episode_counts = memories[update]
+            rollouts, cpu_stats = memories[update]
+            rollouts.to(self.device)
+            running_episode_stats = dict()
+            for key, value in cpu_stats.items():
+                running_episode_stats[key] = value.to(self.device)
             if ppo_cfg.use_linear_lr_decay:
                 lr_scheduler.step()
-
             if ppo_cfg.use_linear_clip_decay:
                 self.agent.clip_param = ppo_cfg.clip_param * linear_decay(
                     update, self.config.NUM_UPDATES
@@ -156,21 +190,16 @@ class PPOReplayTrainer(PPOTrainer):
             ) = self._update_agent_memory(ppo_cfg, rollouts)
             pth_time += delta_pth_time
 
-            window_episode_reward.append(episode_rewards.clone())
-            window_episode_counts.append(episode_counts.clone())
+            for k, v in running_episode_stats.items():
+                window_episode_stats[k].append(v.clone())
 
-            losses = [value_loss, action_loss]
-            stats = zip(
-                ["count", "reward"],
-                [window_episode_counts, window_episode_reward],
-            )
             deltas = {
                 k: (
                     (v[-1] - v[0]).sum().item()
                     if len(v) > 1
                     else v[0].sum().item()
                 )
-                for k, v in stats
+                for k, v in window_episode_stats.items()
             }
             deltas["count"] = max(deltas["count"], 1.0)
 
@@ -178,6 +207,17 @@ class PPOReplayTrainer(PPOTrainer):
                 "reward", deltas["reward"] / deltas["count"], count_steps
             )
 
+            # Check to see if there are any metrics
+            # that haven't been logged yet
+            metrics = {
+                k: v / deltas["count"]
+                for k, v in deltas.items()
+                if k not in {"reward", "count"}
+            }
+            if len(metrics) > 0:
+                writer.add_scalars("metrics", metrics, count_steps)
+
+            losses = [value_loss, action_loss]
             writer.add_scalars(
                 "losses",
                 {k: l for l, k in zip(losses, ["value", "policy"])},
@@ -199,22 +239,16 @@ class PPOReplayTrainer(PPOTrainer):
                     )
                 )
 
-                window_rewards = (
-                        window_episode_reward[-1] - window_episode_reward[0]
-                ).sum()
-                window_counts = (
-                        window_episode_counts[-1] - window_episode_counts[0]
-                ).sum()
-
-                if window_counts > 0:
-                    logger.info(
-                        "Average window size {} reward: {:3f}".format(
-                            len(window_episode_reward),
-                            (window_rewards / window_counts).item(),
-                        )
+                logger.info(
+                    "Average window size: {}  {}".format(
+                        len(window_episode_stats["count"]),
+                        "  ".join(
+                            "{}: {:.3f}".format(k, v / deltas["count"])
+                            for k, v in deltas.items()
+                            if k != "count"
+                        ),
                     )
-                else:
-                    logger.info("No episodes finish in current window")
+                )
 
             # checkpoint model
             if update % self.config.CHECKPOINT_INTERVAL == 0:
@@ -245,6 +279,8 @@ class PPOReplayTrainer(PPOTrainer):
         if not os.path.isdir(self.config.CHECKPOINT_FOLDER):
             os.makedirs(self.config.CHECKPOINT_FOLDER)
         self._setup_actor_critic_agent(ppo_cfg)
+        if self.config.FP16:
+            self.half()
         logger.info(
             "agent number of parameters: {}".format(
                 sum(param.numel() for param in self.agent.parameters())
@@ -257,6 +293,7 @@ class PPOReplayTrainer(PPOTrainer):
             self.envs.observation_spaces[0],
             self.envs.action_spaces[0],
             ppo_cfg.hidden_size,
+            num_recurrent_layers=self.actor_critic.net.num_recurrent_layers,
         )
         rollouts.to(self.device)
 
@@ -272,11 +309,14 @@ class PPOReplayTrainer(PPOTrainer):
         batch = None
         observations = None
 
-        episode_rewards = torch.zeros(self.envs.num_envs, 1)
-        episode_counts = torch.zeros(self.envs.num_envs, 1)
         current_episode_reward = torch.zeros(self.envs.num_envs, 1)
-        window_episode_reward = deque(maxlen=ppo_cfg.reward_window_size)
-        window_episode_counts = deque(maxlen=ppo_cfg.reward_window_size)
+        running_episode_stats = dict(
+            count=torch.zeros(self.envs.num_envs, 1),
+            reward=torch.zeros(self.envs.num_envs, 1),
+        )
+        window_episode_stats = defaultdict(
+            lambda: deque(maxlen=ppo_cfg.reward_window_size)
+        )
 
         t_start = time.time()
         env_time = 0
@@ -299,7 +339,7 @@ class PPOReplayTrainer(PPOTrainer):
 
             # train with agent experiences
             for update in range(self.config.NUM_UPDATES):
-                if update != 0 and update % self.config.REPLAY_INTERVAL == 0:
+                if update != 0 and update % self.config.REPLAY_INTERVAL == 0 and len(self.memory)>=self.config.NUM_REPLAY_UPDATES:
                     self.replay(self.config.NUM_REPLAY_UPDATES, ppo_cfg, lr_scheduler, t_start,
                                 pth_time, writer, count_steps, count_checkpoints)
 
@@ -317,16 +357,12 @@ class PPOReplayTrainer(PPOTrainer):
                         delta_env_time,
                         delta_steps,
                     ) = self._collect_rollout_step(
-                        rollouts,
-                        current_episode_reward,
-                        episode_rewards,
-                        episode_counts,
+                        rollouts, current_episode_reward, running_episode_stats
                     )
                     pth_time += delta_pth_time
                     env_time += delta_env_time
                     count_steps += delta_steps
-
-                self.insert_memory([rollouts, episode_rewards, episode_counts])
+                    self.insert_memory(rollouts, running_episode_stats)
 
                 (
                     delta_pth_time,
@@ -336,21 +372,16 @@ class PPOReplayTrainer(PPOTrainer):
                 ) = self._update_agent(ppo_cfg, rollouts)
                 pth_time += delta_pth_time
 
-                window_episode_reward.append(episode_rewards.clone())
-                window_episode_counts.append(episode_counts.clone())
+                for k, v in running_episode_stats.items():
+                    window_episode_stats[k].append(v.clone())
 
-                losses = [value_loss, action_loss]
-                stats = zip(
-                    ["count", "reward"],
-                    [window_episode_counts, window_episode_reward],
-                )
                 deltas = {
                     k: (
                         (v[-1] - v[0]).sum().item()
                         if len(v) > 1
                         else v[0].sum().item()
                     )
-                    for k, v in stats
+                    for k, v in window_episode_stats.items()
                 }
                 deltas["count"] = max(deltas["count"], 1.0)
 
@@ -358,6 +389,17 @@ class PPOReplayTrainer(PPOTrainer):
                     "reward", deltas["reward"] / deltas["count"], count_steps
                 )
 
+                # Check to see if there are any metrics
+                # that haven't been logged yet
+                metrics = {
+                    k: v / deltas["count"]
+                    for k, v in deltas.items()
+                    if k not in {"reward", "count"}
+                }
+                if len(metrics) > 0:
+                    writer.add_scalars("metrics", metrics, count_steps)
+
+                losses = [value_loss, action_loss]
                 writer.add_scalars(
                     "losses",
                     {k: l for l, k in zip(losses, ["value", "policy"])},
@@ -379,22 +421,16 @@ class PPOReplayTrainer(PPOTrainer):
                         )
                     )
 
-                    window_rewards = (
-                        window_episode_reward[-1] - window_episode_reward[0]
-                    ).sum()
-                    window_counts = (
-                        window_episode_counts[-1] - window_episode_counts[0]
-                    ).sum()
-
-                    if window_counts > 0:
-                        logger.info(
-                            "Average window size {} reward: {:3f}".format(
-                                len(window_episode_reward),
-                                (window_rewards / window_counts).item(),
-                            )
+                    logger.info(
+                        "Average window size: {}  {}".format(
+                            len(window_episode_stats["count"]),
+                            "  ".join(
+                                "{}: {:.3f}".format(k, v / deltas["count"])
+                                for k, v in deltas.items()
+                                if k != "count"
+                            ),
                         )
-                    else:
-                        logger.info("No episodes finish in current window")
+                    )
 
                 # checkpoint model
                 if update % self.config.CHECKPOINT_INTERVAL == 0:
@@ -403,4 +439,133 @@ class PPOReplayTrainer(PPOTrainer):
                     )
                     count_checkpoints += 1
 
-            self.envs.close()
+                self.envs.close()
+
+    def half(self):
+        self.actor_critic.half()
+        self.agent.half()
+        self.actor_critic, self.agent.optimizer \
+            = amp.initialize(self.actor_critic, self.agent.optimizer,
+                             opt_level="O1")
+
+
+class PPOHalf(PPO):
+    def update(self, rollouts, half=False):
+        advantages = self.get_advantages(rollouts)
+
+        value_loss_epoch = 0
+        action_loss_epoch = 0
+        dist_entropy_epoch = 0
+
+        for e in range(self.ppo_epoch):
+            data_generator = rollouts.recurrent_generator(
+                advantages, self.num_mini_batch
+            )
+
+            for sample in data_generator:
+                (
+                    obs_batch,
+                    recurrent_hidden_states_batch,
+                    actions_batch,
+                    prev_actions_batch,
+                    value_preds_batch,
+                    return_batch,
+                    masks_batch,
+                    old_action_log_probs_batch,
+                    adv_targ,
+                ) = sample
+
+                if half:
+                    (
+                        obs_batch,
+                        recurrent_hidden_states_batch,
+                        actions_batch,
+                        prev_actions_batch,
+                        value_preds_batch,
+                        return_batch,
+                        masks_batch,
+                        old_action_log_probs_batch,
+                        adv_targ,
+                    ) = (
+                    obs_batch.half(),
+                    recurrent_hidden_states_batch.half(),
+                    actions_batch.half(),
+                    prev_actions_batch.half(),
+                    value_preds_batch.half(),
+                    return_batch.half(),
+                    masks_batch.half(),
+                    old_action_log_probs_batch.half(),
+                    adv_targ.half(),
+                )
+
+                # Reshape to do in a single forward pass for all steps
+                (
+                    values,
+                    action_log_probs,
+                    dist_entropy,
+                    _,
+                ) = self.actor_critic.evaluate_actions(
+                    obs_batch,
+                    recurrent_hidden_states_batch,
+                    prev_actions_batch,
+                    masks_batch,
+                    actions_batch,
+                )
+
+                ratio = torch.exp(
+                    action_log_probs - old_action_log_probs_batch
+                )
+                surr1 = ratio * adv_targ
+                surr2 = (
+                    torch.clamp(
+                        ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
+                    )
+                    * adv_targ
+                )
+                action_loss = -torch.min(surr1, surr2).mean()
+
+                if self.use_clipped_value_loss:
+                    value_pred_clipped = value_preds_batch + (
+                        values - value_preds_batch
+                    ).clamp(-self.clip_param, self.clip_param)
+                    value_losses = (values - return_batch).pow(2)
+                    value_losses_clipped = (
+                        value_pred_clipped - return_batch
+                    ).pow(2)
+                    value_loss = (
+                        0.5
+                        * torch.max(value_losses, value_losses_clipped).mean()
+                    )
+                else:
+                    value_loss = 0.5 * (return_batch - values).pow(2).mean()
+
+                self.optimizer.zero_grad()
+                total_loss = (
+                    value_loss * self.value_loss_coef
+                    + action_loss
+                    - dist_entropy * self.entropy_coef
+                )
+
+                self.before_backward(total_loss)
+                if half:
+                    with amp.scale_loss(total_loss, self.optimizer) as scaled_loss:
+                        scaled_loss.backward()
+                else:
+                    total_loss.backward()
+                self.after_backward(total_loss)
+
+                self.before_step()
+                self.optimizer.step()
+                self.after_step()
+
+                value_loss_epoch += value_loss.item()
+                action_loss_epoch += action_loss.item()
+                dist_entropy_epoch += dist_entropy.item()
+
+        num_updates = self.ppo_epoch * self.num_mini_batch
+
+        value_loss_epoch /= num_updates
+        action_loss_epoch /= num_updates
+        dist_entropy_epoch /= num_updates
+
+        return value_loss_epoch, action_loss_epoch, dist_entropy_epoch
