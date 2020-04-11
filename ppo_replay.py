@@ -93,7 +93,7 @@ class PPOReplayTrainer(PPOTrainer):
             nn.init.orthogonal_(self.actor_critic.critic.fc.weight)
             nn.init.constant_(self.actor_critic.critic.fc.bias, 0)
 
-        self.agent = PPOHalf(
+        self.agent = PPO(
             actor_critic=self.actor_critic,
             clip_param=ppo_cfg.clip_param,
             ppo_epoch=ppo_cfg.ppo_epoch,
@@ -123,37 +123,9 @@ class PPOReplayTrainer(PPOTrainer):
             next_value, ppo_cfg.use_gae, ppo_cfg.gamma, ppo_cfg.tau
         )
 
-        value_loss, action_loss, dist_entropy = self.agent.update(rollouts, self.config.FP16)
+        value_loss, action_loss, dist_entropy = self.agent.update(rollouts)
 
         # rollouts.after_update()
-
-        return (
-            time.time() - t_update_model,
-            value_loss,
-            action_loss,
-            dist_entropy,
-        )
-
-    def _update_agent(self, ppo_cfg, rollouts):
-        t_update_model = time.time()
-        with torch.no_grad():
-            last_observation = {
-                k: v[rollouts.step] for k, v in rollouts.observations.items()
-            }
-            next_value = self.actor_critic.get_value(
-                last_observation,
-                rollouts.recurrent_hidden_states[rollouts.step],
-                rollouts.prev_actions[rollouts.step],
-                rollouts.masks[rollouts.step],
-            ).detach()
-
-        rollouts.compute_returns(
-            next_value, ppo_cfg.use_gae, ppo_cfg.gamma, ppo_cfg.tau
-        )
-
-        value_loss, action_loss, dist_entropy = self.agent.update(rollouts, self.config.FP16)
-
-        rollouts.after_update()
 
         return (
             time.time() - t_update_model,
@@ -169,10 +141,10 @@ class PPOReplayTrainer(PPOTrainer):
         window_episode_stats = defaultdict(
             lambda: deque(maxlen=ppo_cfg.reward_window_size)
         )
-        memories = self.memory.recall(num_updates)
+        rollouts_memories, cpu_stats_memories = self.memory.recall(num_updates)
         for update in range(num_updates):
-            rollouts, cpu_stats = memories[update]
-            rollouts.to(self.device)
+            rollouts_memory, cpu_stats = rollouts_memories[update], cpu_stats_memories[update]
+            rollouts_memory.to(self.device)
             running_episode_stats = dict()
             for key, value in cpu_stats.items():
                 running_episode_stats[key] = value.to(self.device)
@@ -182,12 +154,13 @@ class PPOReplayTrainer(PPOTrainer):
                 self.agent.clip_param = ppo_cfg.clip_param * linear_decay(
                     update, self.config.NUM_UPDATES
                 )
+            torch.cuda.empty_cache()
             (
                 delta_pth_time,
                 value_loss,
                 action_loss,
                 dist_entropy,
-            ) = self._update_agent_memory(ppo_cfg, rollouts)
+            ) = self._update_agent_memory(ppo_cfg, rollouts_memory)
             pth_time += delta_pth_time
 
             for k, v in running_episode_stats.items():
@@ -295,7 +268,7 @@ class PPOReplayTrainer(PPOTrainer):
             ppo_cfg.hidden_size,
             num_recurrent_layers=self.actor_critic.net.num_recurrent_layers,
         )
-        rollouts.to(self.device)
+        rollouts.to('cpu')
 
         observations = self.envs.reset()
         batch = batch_obs(observations)
@@ -364,6 +337,8 @@ class PPOReplayTrainer(PPOTrainer):
                     count_steps += delta_steps
                     self.insert_memory(rollouts, running_episode_stats)
 
+                torch.cuda.empty_cache()
+                rollouts.to(self.device)
                 (
                     delta_pth_time,
                     value_loss,
@@ -439,133 +414,11 @@ class PPOReplayTrainer(PPOTrainer):
                     )
                     count_checkpoints += 1
 
-                self.envs.close()
+            self.envs.close()
 
     def half(self):
-        self.actor_critic.half()
-        self.agent.half()
-        self.actor_critic, self.agent.optimizer \
-            = amp.initialize(self.actor_critic, self.agent.optimizer,
+        # self.actor_critic.half()
+        # self.agent.half()
+        self.agent, self.agent.optimizer \
+            = amp.initialize(self.agent, self.agent.optimizer,
                              opt_level="O1")
-
-
-class PPOHalf(PPO):
-    def update(self, rollouts, half=False):
-        advantages = self.get_advantages(rollouts)
-
-        value_loss_epoch = 0
-        action_loss_epoch = 0
-        dist_entropy_epoch = 0
-
-        for e in range(self.ppo_epoch):
-            data_generator = rollouts.recurrent_generator(
-                advantages, self.num_mini_batch
-            )
-
-            for sample in data_generator:
-                (
-                    obs_batch,
-                    recurrent_hidden_states_batch,
-                    actions_batch,
-                    prev_actions_batch,
-                    value_preds_batch,
-                    return_batch,
-                    masks_batch,
-                    old_action_log_probs_batch,
-                    adv_targ,
-                ) = sample
-
-                if half:
-                    (
-                        obs_batch,
-                        recurrent_hidden_states_batch,
-                        actions_batch,
-                        prev_actions_batch,
-                        value_preds_batch,
-                        return_batch,
-                        masks_batch,
-                        old_action_log_probs_batch,
-                        adv_targ,
-                    ) = (
-                    obs_batch.half(),
-                    recurrent_hidden_states_batch.half(),
-                    actions_batch.half(),
-                    prev_actions_batch.half(),
-                    value_preds_batch.half(),
-                    return_batch.half(),
-                    masks_batch.half(),
-                    old_action_log_probs_batch.half(),
-                    adv_targ.half(),
-                )
-
-                # Reshape to do in a single forward pass for all steps
-                (
-                    values,
-                    action_log_probs,
-                    dist_entropy,
-                    _,
-                ) = self.actor_critic.evaluate_actions(
-                    obs_batch,
-                    recurrent_hidden_states_batch,
-                    prev_actions_batch,
-                    masks_batch,
-                    actions_batch,
-                )
-
-                ratio = torch.exp(
-                    action_log_probs - old_action_log_probs_batch
-                )
-                surr1 = ratio * adv_targ
-                surr2 = (
-                    torch.clamp(
-                        ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
-                    )
-                    * adv_targ
-                )
-                action_loss = -torch.min(surr1, surr2).mean()
-
-                if self.use_clipped_value_loss:
-                    value_pred_clipped = value_preds_batch + (
-                        values - value_preds_batch
-                    ).clamp(-self.clip_param, self.clip_param)
-                    value_losses = (values - return_batch).pow(2)
-                    value_losses_clipped = (
-                        value_pred_clipped - return_batch
-                    ).pow(2)
-                    value_loss = (
-                        0.5
-                        * torch.max(value_losses, value_losses_clipped).mean()
-                    )
-                else:
-                    value_loss = 0.5 * (return_batch - values).pow(2).mean()
-
-                self.optimizer.zero_grad()
-                total_loss = (
-                    value_loss * self.value_loss_coef
-                    + action_loss
-                    - dist_entropy * self.entropy_coef
-                )
-
-                self.before_backward(total_loss)
-                if half:
-                    with amp.scale_loss(total_loss, self.optimizer) as scaled_loss:
-                        scaled_loss.backward()
-                else:
-                    total_loss.backward()
-                self.after_backward(total_loss)
-
-                self.before_step()
-                self.optimizer.step()
-                self.after_step()
-
-                value_loss_epoch += value_loss.item()
-                action_loss_epoch += action_loss.item()
-                dist_entropy_epoch += dist_entropy.item()
-
-        num_updates = self.ppo_epoch * self.num_mini_batch
-
-        value_loss_epoch /= num_updates
-        action_loss_epoch /= num_updates
-        dist_entropy_epoch /= num_updates
-
-        return value_loss_epoch, action_loss_epoch, dist_entropy_epoch

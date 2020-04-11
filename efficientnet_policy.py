@@ -75,6 +75,8 @@ class EfficientNetEncoder(nn.Module):
 
             self.output_shape = hidden_size
 
+        # self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
     @property
     def is_blind(self):
         return self._n_input_rgb + self._n_input_depth == 0
@@ -109,8 +111,10 @@ class EfficientNetEncoder(nn.Module):
 
         x = torch.cat(cnn_input, dim=1)
         x = F.avg_pool2d(x, 2)
-
+        # print(x.shape)
         x = self.running_mean_and_var(x)
+        device = next(self.backbone.parameters()).device
+        x = x.to(device)
         x = self.backbone(x)
         return x
 
@@ -164,6 +168,7 @@ class PointNavEfficientNetNet(Net):
             num_layers=num_recurrent_layers,
         )
 
+        # self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self.train()
 
     @property
@@ -180,6 +185,7 @@ class PointNavEfficientNetNet(Net):
 
     def get_tgt_encoding(self, observations):
         goal_observations = observations[self.goal_sensor_uuid]
+        # print(goal_observations)
         goal_observations = torch.stack(
             [
                 goal_observations[:, 0],
@@ -188,8 +194,9 @@ class PointNavEfficientNetNet(Net):
             ],
             -1,
         )
+        device = next(self.tgt_embeding.parameters()).device
 
-        return self.tgt_embeding(goal_observations)
+        return self.tgt_embeding(goal_observations.to(device))
 
     def forward(self, observations, rnn_hidden_states, prev_actions, masks):
         x = []
@@ -201,6 +208,9 @@ class PointNavEfficientNetNet(Net):
 
             x.append(visual_feats)
         tgt_encoding = self.get_tgt_encoding(observations)
+        device = next(self.prev_action_embedding.parameters()).device
+        prev_actions = prev_actions.to(device)
+        masks = masks.to(device)
         prev_actions = self.prev_action_embedding(
             ((prev_actions.float() + 1) * masks).long().squeeze(-1)
         )
@@ -208,6 +218,10 @@ class PointNavEfficientNetNet(Net):
         x += [tgt_encoding, prev_actions]
 
         x = torch.cat(x, dim=1)
+        device = next(self.state_encoder.parameters()).to(device)
+        x = x.to(device)
+        rnn_hidden_states = rnn_hidden_states.to(device)
+        masks = masks.to(device)
         x, rnn_hidden_states = self.state_encoder(x, rnn_hidden_states, masks)
 
         return x, rnn_hidden_states

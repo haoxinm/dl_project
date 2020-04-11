@@ -1,3 +1,5 @@
-import efficientnet_pytorch
+import subprocess
 
-print("success")
+
+# subprocess.call(['conda', 'activate', 'habitat'])
+subprocess.call(['bash', 'debug.sh'])
