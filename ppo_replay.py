@@ -14,12 +14,41 @@ from habitat_baselines.common.utils import (
     batch_obs,
     linear_decay,
 )
-from habitat_baselines.rl.ppo import PPO
+from habitat_baselines.rl.ppo import PPO, PointNavBaselinePolicy
 from habitat_baselines.rl.ppo.ppo_trainer import PPOTrainer
 from torch.optim.lr_scheduler import LambdaLR
+import numpy as np
 
 from efficientnet_policy import PointNavEfficientNetPolicy
 from replay_buffer import RolloutReplayBuffer
+from habitat.core.utils import try_cv2_import
+from habitat.utils.visualizations import maps
+cv2 = try_cv2_import()
+
+
+def draw_top_down_map(info, heading, output_size):
+    top_down_map = maps.colorize_topdown_map(
+        info["top_down_map"]["map"], info["top_down_map"]["fog_of_war_mask"]
+    )
+    original_map_size = top_down_map.shape[:2]
+    map_scale = np.array(
+        (1, original_map_size[1] * 1.0 / original_map_size[0])
+    )
+    new_map_size = np.round(output_size * map_scale).astype(np.int32)
+    # OpenCV expects w, h but map size is in h, w
+    top_down_map = cv2.resize(top_down_map, (new_map_size[1], new_map_size[0]))
+
+    map_agent_pos = info["top_down_map"]["agent_map_coord"]
+    map_agent_pos = np.round(
+        map_agent_pos * new_map_size / original_map_size
+    ).astype(np.int32)
+    top_down_map = maps.draw_agent(
+        top_down_map,
+        map_agent_pos,
+        heading - np.pi / 2,
+        agent_radius_px=top_down_map.shape[0] / 40,
+    )
+    return top_down_map
 
 
 @baseline_registry.register_trainer(name="ppo_replay")
@@ -44,18 +73,24 @@ class PPOReplayTrainer(PPOTrainer):
         """
         logger.add_filehandler(self.config.LOG_FILE)
 
-        self.actor_critic = PointNavEfficientNetPolicy(
+        # self.actor_critic = PointNavEfficientNetPolicy(
+        #     observation_space=self.envs.observation_spaces[0],
+        #     action_space=self.envs.action_spaces[0],
+        #     hidden_size=ppo_cfg.hidden_size,
+        #     rnn_type=self.config.RL.PPO.rnn_type,
+        #     num_recurrent_layers=self.config.RL.PPO.num_recurrent_layers,
+        #     backbone=self.config.RL.PPO.backbone,
+        #     goal_sensor_uuid=self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID,
+        #     normalize_visual_inputs="rgb"
+        #                             in self.envs.observation_spaces[0].spaces,
+        #     pretrained=self.config.RL.PPO.PRETRAINED,
+        #     finetune=self.config.RL.PPO.FINETUNE,
+        # )
+        self.actor_critic = PointNavBaselinePolicy(
             observation_space=self.envs.observation_spaces[0],
             action_space=self.envs.action_spaces[0],
             hidden_size=ppo_cfg.hidden_size,
-            rnn_type=self.config.RL.PPO.rnn_type,
-            num_recurrent_layers=self.config.RL.PPO.num_recurrent_layers,
-            backbone=self.config.RL.PPO.backbone,
             goal_sensor_uuid=self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID,
-            normalize_visual_inputs="rgb"
-                                    in self.envs.observation_spaces[0].spaces,
-            pretrained=self.config.RL.PPO.PRETRAINED,
-            finetune=self.config.RL.PPO.FINETUNE,
         )
         self.actor_critic.to(self.device)
 
@@ -105,6 +140,91 @@ class PPOReplayTrainer(PPOTrainer):
             max_grad_norm=ppo_cfg.max_grad_norm,
             use_normalized_advantage=ppo_cfg.use_normalized_advantage,
         )
+
+    def _collect_rollout_step(
+        self, rollouts, current_episode_reward, running_episode_stats
+    ):
+        pth_time = 0.0
+        env_time = 0.0
+
+        t_sample_action = time.time()
+        rollouts.to(self.device)
+        # sample actions
+        with torch.no_grad():
+            step_observation = {
+                k: v[rollouts.step] for k, v in rollouts.observations.items()
+            }
+
+            (
+                values,
+                actions,
+                actions_log_probs,
+                recurrent_hidden_states,
+            ) = self.actor_critic.act(
+                step_observation,
+                rollouts.recurrent_hidden_states[rollouts.step],
+                rollouts.prev_actions[rollouts.step],
+                rollouts.masks[rollouts.step],
+            )
+
+        pth_time += time.time() - t_sample_action
+
+        t_step_env = time.time()
+        outputs = self.envs.step([a[0].item() for a in actions])
+        observations, rewards, dones, infos = [list(x) for x in zip(*outputs)]
+
+        top_down_map = draw_top_down_map(
+            infos[0], observations[0]["heading"][0], observations[0]['depth'].shape[0]
+        )
+
+        env_time += time.time() - t_step_env
+
+        t_update_stats = time.time()
+        batch = batch_obs(observations, device=self.device)
+        rewards = torch.tensor(
+            rewards, dtype=torch.float, device=current_episode_reward.device
+        )
+        rewards = rewards.unsqueeze(1)
+
+        masks = torch.tensor(
+            [[0.0] if done else [1.0] for done in dones],
+            dtype=torch.float,
+            device=current_episode_reward.device,
+        )
+
+        current_episode_reward += rewards
+        running_episode_stats["reward"] += (1 - masks) * current_episode_reward
+        running_episode_stats["count"] += 1 - masks
+        for k, v in self._extract_scalars_from_infos(infos).items():
+            v = torch.tensor(
+                v, dtype=torch.float, device=current_episode_reward.device
+            ).unsqueeze(1)
+            if k not in running_episode_stats:
+                running_episode_stats[k] = torch.zeros_like(
+                    running_episode_stats["count"]
+                )
+
+            running_episode_stats[k] += (1 - masks) * v
+
+        current_episode_reward *= masks
+
+        if self._static_encoder:
+            with torch.no_grad():
+                batch["visual_features"] = self._encoder(batch)
+
+        rollouts.insert(
+            batch,
+            recurrent_hidden_states,
+            actions,
+            actions_log_probs,
+            values,
+            rewards,
+            masks,
+        )
+
+        pth_time += time.time() - t_update_stats
+
+        return pth_time, env_time, self.envs.num_envs, top_down_map
 
     def _update_agent_memory(self, ppo_cfg, rollouts):
         t_update_model = time.time()
@@ -329,22 +449,24 @@ class PPOReplayTrainer(PPOTrainer):
                         delta_pth_time,
                         delta_env_time,
                         delta_steps,
+                        top_down_map,
                     ) = self._collect_rollout_step(
                         rollouts, current_episode_reward, running_episode_stats
                     )
+                    writer.add_image('top down map', top_down_map, step + update * ppo_cfg.num_steps)
                     pth_time += delta_pth_time
                     env_time += delta_env_time
                     count_steps += delta_steps
                     self.insert_memory(rollouts, running_episode_stats)
 
                 torch.cuda.empty_cache()
-                rollouts.to(self.device)
-                (
-                    delta_pth_time,
-                    value_loss,
-                    action_loss,
-                    dist_entropy,
-                ) = self._update_agent(ppo_cfg, rollouts)
+                # rollouts.to(self.device)
+                # (
+                #     delta_pth_time,
+                #     value_loss,
+                #     action_loss,
+                #     dist_entropy,
+                # ) = self._update_agent(ppo_cfg, rollouts)
                 pth_time += delta_pth_time
 
                 for k, v in running_episode_stats.items():

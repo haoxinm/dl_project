@@ -15,6 +15,8 @@ from ppo_replay import PPOReplayTrainer
 
 
 def main():
+    distributed_parser = argparse.ArgumentParser()
+    distributed_parser.add_argument()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--run-type",

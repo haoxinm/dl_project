@@ -7,6 +7,40 @@ from habitat_baselines.rl.ddppo.policy.running_mean_and_var import (
 from habitat_baselines.rl.models.rnn_state_encoder import RNNStateEncoder
 from habitat_baselines.rl.ppo import Net, Policy
 from torch.nn import functional as F
+from habitat_baselines.common.utils import CustomFixedCategorical
+
+
+class LSTMHead(nn.Module):
+    def __init__(self, input_size):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size, 1)
+        nn.init.orthogonal_(self.lstm.weight)
+        nn.init.constant_(self.lstm.bias, 0)
+        self.hx = torch.randn(1)
+        self.cx = torch.randn(1)
+
+    def forward(self, x):
+        output, (h, c) = self.lstm(x.unsqueeze(1), (self.hx, self.cx))
+        self.hx = h
+        self.cx = c
+        return output.squeeze(1)
+
+
+class LSTMCategorical(nn.Module):
+    def __init__(self, num_inputs, num_outputs):
+        super().__init__()
+
+        self.lstm = nn.LSTM(num_inputs, num_outputs)
+        nn.init.orthogonal_(self.lstm.weight)
+        nn.init.constant_(self.lstm.bias, 0)
+        self.hx = torch.randn(num_outputs)
+        self.cx = torch.randn(num_outputs)
+
+    def forward(self, x):
+        output, (h, c) = self.lstm(x.unsqueeze(1), (self.hx, self.cx))
+        self.hx = h
+        self.cx = c
+        return CustomFixedCategorical(logits=output.squeeze(1))
 
 
 class PointNavEfficientNetPolicy(Policy):
@@ -38,6 +72,8 @@ class PointNavEfficientNetPolicy(Policy):
             ),
             action_space.n,
         )
+        self.action_distribution = LSTMCategorical(self.net.output_size, self.dim_actions)
+        self.critic = LSTMHead(self.net.output_size)
 
 
 class EfficientNetEncoder(nn.Module):
@@ -185,7 +221,7 @@ class PointNavEfficientNetNet(Net):
 
     def get_tgt_encoding(self, observations):
         goal_observations = observations[self.goal_sensor_uuid]
-        # print(goal_observations)
+        # print(torch.sum(goal_observations**2))
         goal_observations = torch.stack(
             [
                 goal_observations[:, 0],

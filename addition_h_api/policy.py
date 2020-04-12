@@ -73,16 +73,16 @@ class Policy(nn.Module):
 
 
 class CriticHead(nn.Module):
-    def __init__(self, input_size):
+    def __init__(self, input_size, output_size):
         super().__init__()
-        self.lstm = nn.LSTMCell(input_size, 1)
+        self.lstm = nn.LSTMCell(input_size, output_size)
         nn.init.orthogonal_(self.lstm.weight)
         nn.init.constant_(self.lstm.bias, 0)
-        self.hx = torch.randn(1)
-        self.cx = torch.randn(1)
+        self.hx = torch.zeros(output_size)
+        self.cx = torch.zeros(output_size)
 
     def forward(self, x):
-        h,c = self.lstm(x, (h, c))
+        h,c = self.lstm(x, (self.hx, self.cx))
         self.hx = h
         self.cx = c
         return h
