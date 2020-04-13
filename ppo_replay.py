@@ -75,25 +75,25 @@ class PPOReplayTrainer(PPOTrainer):
         """
         logger.add_filehandler(self.config.LOG_FILE)
 
-        # self.actor_critic = PointNavEfficientNetPolicy(
-        #     observation_space=self.envs.observation_spaces[0],
-        #     action_space=self.envs.action_spaces[0],
-        #     hidden_size=ppo_cfg.hidden_size,
-        #     rnn_type=self.config.RL.PPO.rnn_type,
-        #     num_recurrent_layers=self.config.RL.PPO.num_recurrent_layers,
-        #     backbone=self.config.RL.PPO.backbone,
-        #     goal_sensor_uuid=self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID,
-        #     normalize_visual_inputs="rgb"
-        #                             in self.envs.observation_spaces[0].spaces,
-        #     pretrained=self.config.RL.PPO.PRETRAINED,
-        #     finetune=self.config.RL.PPO.FINETUNE,
-        # )
-        self.actor_critic = PointNavBaselinePolicy(
+        self.actor_critic = PointNavEfficientNetPolicy(
             observation_space=self.envs.observation_spaces[0],
             action_space=self.envs.action_spaces[0],
             hidden_size=ppo_cfg.hidden_size,
+            rnn_type=self.config.RL.PPO.rnn_type,
+            num_recurrent_layers=self.config.RL.PPO.num_recurrent_layers,
+            backbone=self.config.RL.PPO.backbone,
             goal_sensor_uuid=self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID,
+            normalize_visual_inputs="rgb"
+                                    in self.envs.observation_spaces[0].spaces,
+            pretrained=self.config.RL.PPO.PRETRAINED,
+            finetune=self.config.RL.PPO.FINETUNE,
         )
+        # self.actor_critic = PointNavBaselinePolicy(
+        #     observation_space=self.envs.observation_spaces[0],
+        #     action_space=self.envs.action_spaces[0],
+        #     hidden_size=ppo_cfg.hidden_size,
+        #     goal_sensor_uuid=self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID,
+        # )
         self.actor_critic.to(self.device)
 
         if (
@@ -462,13 +462,13 @@ class PPOReplayTrainer(PPOTrainer):
                     self.insert_memory(rollouts, running_episode_stats)
 
                 torch.cuda.empty_cache()
-                # rollouts.to(self.device)
-                # (
-                #     delta_pth_time,
-                #     value_loss,
-                #     action_loss,
-                #     dist_entropy,
-                # ) = self._update_agent(ppo_cfg, rollouts)
+                rollouts.to(self.device)
+                (
+                    delta_pth_time,
+                    value_loss,
+                    action_loss,
+                    dist_entropy,
+                ) = self._update_agent(ppo_cfg, rollouts)
                 pth_time += delta_pth_time
 
                 for k, v in running_episode_stats.items():
