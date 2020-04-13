@@ -54,6 +54,8 @@ def draw_top_down_map(info, heading, output_size):
 @baseline_registry.register_trainer(name="ppo_replay")
 class PPOReplayTrainer(PPOTrainer):
 
+    METRICS_BLACKLIST = {}  # "top_down_map", "collisions.is_collision"
+
     def __init__(self, config=None):
         super().__init__(config)
         self.memory = RolloutReplayBuffer(config.REPLAY_MEMORY_SIZE)
@@ -224,7 +226,7 @@ class PPOReplayTrainer(PPOTrainer):
 
         pth_time += time.time() - t_update_stats
 
-        return pth_time, env_time, self.envs.num_envs, top_down_map
+        return pth_time, env_time, self.envs.num_envs, np.transpose(top_down_map, [2, 0, 1])
 
     def _update_agent_memory(self, ppo_cfg, rollouts):
         t_update_model = time.time()
