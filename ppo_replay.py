@@ -26,6 +26,7 @@ from habitat.utils.visualizations import maps
 cv2 = try_cv2_import()
 
 
+
 def draw_top_down_map(info, heading, output_size):
     top_down_map = maps.colorize_topdown_map(
         info["top_down_map"]["map"], info["top_down_map"]["fog_of_war_mask"]
@@ -322,7 +323,7 @@ class PPOReplayTrainer(PPOTrainer):
                 count_steps,
             )
 
-
+        
     def train(self) -> None:
         r"""Main method for training PPO.
 
@@ -333,6 +334,7 @@ class PPOReplayTrainer(PPOTrainer):
         self.envs = construct_envs(
             self.config, get_env_class(self.config.ENV_NAME)
         )
+
 
         ppo_cfg = self.config.RL.PPO
         self.device = (
@@ -421,7 +423,8 @@ class PPOReplayTrainer(PPOTrainer):
                         update, self.config.NUM_UPDATES
                     )
 
-                for step in range(ppo_cfg.num_steps):
+                for step in range(ppo_cfg.num_steps):                 
+                    best_actions_before_act = self.envs.call(["get_best_action"] * self.envs.num_envs)
                     (
                         delta_pth_time,
                         delta_env_time,
@@ -430,6 +433,7 @@ class PPOReplayTrainer(PPOTrainer):
                     ) = self._collect_rollout_step(
                         rollouts, current_episode_reward, running_episode_stats
                     )
+                    best_actions_after_act = self.envs.call(["get_best_action"] * self.envs.num_envs)
                     for i in range(len(top_down_map)):
                         writer.add_image('top down map-env{}'.format(i), top_down_map[i],
                                          step + update * ppo_cfg.num_steps)

@@ -1,6 +1,7 @@
 #/bin/bash
 export GLOG_minloglevel=2
 export MAGNUM_LOG=quiet
+CUDA_VISIBLE_DEVICES=0,1
 
 set -x
 python -u -m torch.distributed.launch \
