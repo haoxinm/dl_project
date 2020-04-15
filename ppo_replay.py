@@ -7,7 +7,7 @@ import torch.nn as nn
 from habitat import Config, logger
 from habitat_baselines.common.baseline_registry import baseline_registry
 from habitat_baselines.common.env_utils import construct_envs
-from habitat_baselines.common.environments import get_env_class
+from dlprojectenv import get_env_class
 from habitat_baselines.common.rollout_storage import RolloutStorage
 from habitat_baselines.common.tensorboard_utils import TensorboardWriter
 from habitat_baselines.common.utils import (
@@ -330,7 +330,8 @@ class PPOReplayTrainer(PPOTrainer):
         Returns:
             None
         """
-
+        print(get_env_class(self.config.ENV_NAME))
+        print(self.config.ENV_NAME)
         self.envs = construct_envs(
             self.config, get_env_class(self.config.ENV_NAME)
         )

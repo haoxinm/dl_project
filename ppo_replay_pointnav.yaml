@@ -1,6 +1,6 @@
 BASE_TASK_CONFIG_PATH: "train_pointnav2020.rgbd.yaml"
 TRAINER_NAME: "ppo_replay"
-ENV_NAME: "NavRLEnv"
+ENV_NAME: "DLProjectRLENV"
 SIMULATOR_GPU_ID: 0
 TORCH_GPU_ID: 1
 VIDEO_OPTION: []
