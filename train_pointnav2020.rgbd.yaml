@@ -15,9 +15,9 @@ SIMULATOR:
     HEIGHT: 360
     HFOV: 70
     POSITION: [0, 0.88, 0]
-    NOISE_MODEL: "GaussianNoiseModel"
-    NOISE_MODEL_KWARGS:
-      intensity_constant: 0.1
+#    NOISE_MODEL: "GaussianNoiseModel"
+#    NOISE_MODEL_KWARGS:
+#      intensity_constant: 0.1
 
   DEPTH_SENSOR:
     WIDTH: 640

@@ -104,12 +104,15 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
             env_done = False
             obs = env.reset()
         else:
-            action = keys_to_action.get(tuple(sorted(pressed_keys)), 0)
+            action = keys_to_action.get(tuple(sorted(pressed_keys)), (-1,))[0]
             prev_obs = obs
-            outputs = env.step([action])
-            obs, rew, env_done, info = [list(x) for x in zip(*outputs)]
-            if callback is not None:
-                callback(prev_obs, obs, action, rew, env_done, info)
+            print(action)
+            if action>=0:
+                outputs = env.step([action])
+                obs, rew, env_done, info = [list(x) for x in zip(*outputs)]
+                print(env_done)
+                if callback is not None:
+                    callback(prev_obs, obs, action, rew, env_done, info)
         if obs is not None:
             rendered = env.render(mode='rgb_array')
             display_arr(screen, rendered, transpose=transpose, video_size=video_size)
@@ -148,6 +151,7 @@ def main():
     keys_to_action[tuple(sorted([ord('d')]))] = HabitatSimActions.TURN_RIGHT,
     keys_to_action[tuple(sorted([ord('\n')]))] = HabitatSimActions.STOP,
     keys_to_action[tuple(sorted([ord('\r')]))] = HabitatSimActions.STOP,
+    print(keys_to_action)
 
 
     play(env, keys_to_action=keys_to_action)
