@@ -127,10 +127,11 @@ class PPOReplayTrainer(PPOTrainer):
                 param.requires_grad_(False)
 
         if self.config.RL.PPO.reset_critic:
-            nn.init.orthogonal_(self.actor_critic.critic.fc.weight)
-            nn.init.constant_(self.actor_critic.critic.fc.bias, 0)
+            self.actor_critic.critic.reset()
+            # nn.init.orthogonal_(self.actor_critic.critic.fc.weight)
+            # nn.init.constant_(self.actor_critic.critic.fc.bias, 0)
 
-        self.agent = PPO(
+        self.agent = PPODistributed(
             actor_critic=self.actor_critic,
             clip_param=ppo_cfg.clip_param,
             ppo_epoch=ppo_cfg.ppo_epoch,
@@ -150,7 +151,7 @@ class PPOReplayTrainer(PPOTrainer):
         env_time = 0.0
 
         t_sample_action = time.time()
-        rollouts.to(self.device)
+        # rollouts.to(self.device)
         # sample actions
         with torch.no_grad():
             step_observation = {
@@ -175,9 +176,13 @@ class PPOReplayTrainer(PPOTrainer):
         outputs = self.envs.step([a[0].item() for a in actions])
         observations, rewards, dones, infos = [list(x) for x in zip(*outputs)]
 
-        top_down_map = draw_top_down_map(
-            infos[0], observations[0]["heading"][0], observations[0]['depth'].shape[0]
-        )
+        top_down_map = []
+        for i in range(self.envs.num_envs):
+            top_down_map.append(np.transpose(draw_top_down_map(
+                infos[i], observations[i]["heading"][0], observations[i]['depth'].shape[0]
+            ), [2, 0, 1]))
+            if infos[i]['collisions']['is_collision']:
+                rewards[i] += self.config.RL.COLLISION_REWARD
 
         env_time += time.time() - t_step_env
 
@@ -226,7 +231,7 @@ class PPOReplayTrainer(PPOTrainer):
 
         pth_time += time.time() - t_update_stats
 
-        return pth_time, env_time, self.envs.num_envs, np.transpose(top_down_map, [2, 0, 1])
+        return pth_time, env_time, self.envs.num_envs, top_down_map
 
     def _update_agent_memory(self, ppo_cfg, rollouts):
         t_update_model = time.time()
@@ -256,8 +261,8 @@ class PPOReplayTrainer(PPOTrainer):
             dist_entropy,
         )
 
-    def replay(self, num_updates, ppo_cfg, lr_scheduler, t_start, pth_time, writer,
-               count_steps, count_checkpoints):
+    def replay(self, num_updates, ppo_cfg, lr_scheduler, pth_time, writer,
+               count_steps):
         print(".....start memory replay for {} updates.....".format(num_updates))
         env_time = 0
         window_episode_stats = defaultdict(
@@ -265,8 +270,9 @@ class PPOReplayTrainer(PPOTrainer):
         )
         rollouts_memories, cpu_stats_memories = self.memory.recall(num_updates)
         for update in range(num_updates):
+            count_steps += 1
             rollouts_memory, cpu_stats = rollouts_memories[update], cpu_stats_memories[update]
-            rollouts_memory.to(self.device)
+            rollouts_memory.to(self.env_device)
             running_episode_stats = dict()
             for key, value in cpu_stats.items():
                 running_episode_stats[key] = value.to(self.device)
@@ -276,13 +282,14 @@ class PPOReplayTrainer(PPOTrainer):
                 self.agent.clip_param = ppo_cfg.clip_param * linear_decay(
                     update, self.config.NUM_UPDATES
                 )
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()
             (
                 delta_pth_time,
                 value_loss,
                 action_loss,
                 dist_entropy,
             ) = self._update_agent_memory(ppo_cfg, rollouts_memory)
+            rollouts_memory.to('cpu')
             pth_time += delta_pth_time
 
             for k, v in running_episode_stats.items():
@@ -297,10 +304,6 @@ class PPOReplayTrainer(PPOTrainer):
                 for k, v in window_episode_stats.items()
             }
             deltas["count"] = max(deltas["count"], 1.0)
-
-            writer.add_scalar(
-                "reward", deltas["reward"] / deltas["count"], count_steps
-            )
 
             # Check to see if there are any metrics
             # that haven't been logged yet
@@ -319,40 +322,6 @@ class PPOReplayTrainer(PPOTrainer):
                 count_steps,
             )
 
-            # log stats
-            if update > 0 and update % self.config.LOG_INTERVAL == 0:
-                logger.info(
-                    "update: {}\tfps: {:.3f}\t".format(
-                        update, count_steps / (time.time() - t_start)
-                    )
-                )
-
-                logger.info(
-                    "update: {}\tenv-time: {:.3f}s\tpth-time: {:.3f}s\t"
-                    "frames: {}".format(
-                        update, env_time, pth_time, count_steps
-                    )
-                )
-
-                logger.info(
-                    "Average window size: {}  {}".format(
-                        len(window_episode_stats["count"]),
-                        "  ".join(
-                            "{}: {:.3f}".format(k, v / deltas["count"])
-                            for k, v in deltas.items()
-                            if k != "count"
-                        ),
-                    )
-                )
-
-            # checkpoint model
-            if update % self.config.CHECKPOINT_INTERVAL == 0:
-                self.save_checkpoint(
-                    f"ckpt.{count_checkpoints}.pth", dict(step=count_steps)
-                )
-                count_checkpoints += 1
-
-            count_steps += 1
 
     def train(self) -> None:
         r"""Main method for training PPO.
@@ -368,6 +337,11 @@ class PPOReplayTrainer(PPOTrainer):
         ppo_cfg = self.config.RL.PPO
         self.device = (
             torch.device("cuda", self.config.TORCH_GPU_ID)
+            if torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+        self.env_device = (
+            torch.device("cuda", self.config.SIMULATOR_GPU_ID)
             if torch.cuda.is_available()
             else torch.device("cpu")
         )
@@ -390,7 +364,8 @@ class PPOReplayTrainer(PPOTrainer):
             ppo_cfg.hidden_size,
             num_recurrent_layers=self.actor_critic.net.num_recurrent_layers,
         )
-        rollouts.to('cpu')
+        # rollouts.to('cpu')
+        rollouts.to(self.env_device)
 
         observations = self.envs.reset()
         batch = batch_obs(observations)
@@ -429,14 +404,14 @@ class PPOReplayTrainer(PPOTrainer):
         ) as writer:
 
             # train with human demonstrations
-            self.replay(self.config.NUM_DEMO_UPDATES, ppo_cfg, lr_scheduler, t_start,
-                        pth_time, writer, count_steps, count_checkpoints)
+            self.replay(self.config.NUM_DEMO_UPDATES, ppo_cfg, lr_scheduler,
+                        pth_time, writer, count_steps)
 
             # train with agent experiences
             for update in range(self.config.NUM_UPDATES):
                 if update != 0 and update % self.config.REPLAY_INTERVAL == 0 and len(self.memory)>=self.config.NUM_REPLAY_UPDATES:
-                    self.replay(self.config.NUM_REPLAY_UPDATES, ppo_cfg, lr_scheduler, t_start,
-                                pth_time, writer, count_steps, count_checkpoints)
+                    self.replay(self.config.NUM_REPLAY_UPDATES, ppo_cfg, lr_scheduler,
+                                pth_time, writer, count_steps)
 
                 if ppo_cfg.use_linear_lr_decay:
                     lr_scheduler.step()
@@ -455,14 +430,16 @@ class PPOReplayTrainer(PPOTrainer):
                     ) = self._collect_rollout_step(
                         rollouts, current_episode_reward, running_episode_stats
                     )
-                    writer.add_image('top down map', top_down_map, step + update * ppo_cfg.num_steps)
+                    for i in range(len(top_down_map)):
+                        writer.add_image('top down map-env{}'.format(i), top_down_map[i],
+                                         step + update * ppo_cfg.num_steps)
                     pth_time += delta_pth_time
                     env_time += delta_env_time
                     count_steps += delta_steps
                     self.insert_memory(rollouts, running_episode_stats)
 
-                torch.cuda.empty_cache()
-                rollouts.to(self.device)
+                # torch.cuda.empty_cache()
+                # rollouts.to(self.device)
                 (
                     delta_pth_time,
                     value_loss,
@@ -546,3 +523,102 @@ class PPOReplayTrainer(PPOTrainer):
         self.agent, self.agent.optimizer \
             = amp.initialize(self.agent, self.agent.optimizer,
                              opt_level="O1")
+
+
+class PPODistributed(PPO):
+    def update(self, rollouts):
+        advantages = self.get_advantages(rollouts)
+
+        value_loss_epoch = 0
+        action_loss_epoch = 0
+        dist_entropy_epoch = 0
+
+        for e in range(self.ppo_epoch):
+            data_generator = rollouts.recurrent_generator(
+                advantages, self.num_mini_batch
+            )
+
+            for sample in data_generator:
+                (
+                    obs_batch,
+                    recurrent_hidden_states_batch,
+                    actions_batch,
+                    prev_actions_batch,
+                    value_preds_batch,
+                    return_batch,
+                    masks_batch,
+                    old_action_log_probs_batch,
+                    adv_targ,
+                ) = sample
+
+                # torch.cuda.empty_cache()
+                # Reshape to do in a single forward pass for all steps
+                (
+                    values,
+                    action_log_probs,
+                    dist_entropy,
+                    _,
+                ) = self.actor_critic.evaluate_actions(
+                    obs_batch,
+                    recurrent_hidden_states_batch,
+                    prev_actions_batch,
+                    masks_batch,
+                    actions_batch,
+                )
+
+                ratio = torch.exp(
+                    action_log_probs - old_action_log_probs_batch.to(action_log_probs.device)
+                )
+                adv_targ = adv_targ.to(ratio.device)
+                surr1 = ratio * adv_targ
+                surr2 = (
+                    torch.clamp(
+                        ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
+                    )
+                    * adv_targ
+                )
+                action_loss = -torch.min(surr1, surr2).mean()
+
+                if self.use_clipped_value_loss:
+                    value_preds_batch = value_preds_batch.to(values.device)
+                    return_batch = return_batch.to(values.device)
+                    value_pred_clipped = value_preds_batch + (
+                        values - value_preds_batch
+                    ).clamp(-self.clip_param, self.clip_param)
+                    value_losses = (values - return_batch).pow(2)
+                    value_losses_clipped = (
+                        value_pred_clipped - return_batch
+                    ).pow(2)
+                    value_loss = (
+                        0.5
+                        * torch.max(value_losses, value_losses_clipped).mean()
+                    )
+                else:
+                    value_loss = 0.5 * (return_batch - values).pow(2).mean()
+
+                self.optimizer.zero_grad()
+                total_loss = (
+                    value_loss * self.value_loss_coef
+                    + action_loss
+                    - dist_entropy * self.entropy_coef
+                )
+
+                self.before_backward(total_loss)
+                total_loss.backward()
+                self.after_backward(total_loss)
+
+                self.before_step()
+                self.optimizer.step()
+                self.after_step()
+
+                value_loss_epoch += value_loss.item()
+                action_loss_epoch += action_loss.item()
+                dist_entropy_epoch += dist_entropy.item()
+
+        num_updates = self.ppo_epoch * self.num_mini_batch
+
+        value_loss_epoch /= num_updates
+        action_loss_epoch /= num_updates
+        dist_entropy_epoch /= num_updates
+
+        return value_loss_epoch, action_loss_epoch, dist_entropy_epoch

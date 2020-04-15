@@ -2,22 +2,22 @@ BASE_TASK_CONFIG_PATH: "train_pointnav2020.rgbd.yaml"
 TRAINER_NAME: "ppo_replay"
 ENV_NAME: "NavRLEnv"
 SIMULATOR_GPU_ID: 0
-TORCH_GPU_ID: 0
+TORCH_GPU_ID: 1
 VIDEO_OPTION: []
 TENSORBOARD_DIR: "tb"
 VIDEO_DIR: "video_dir"
 TEST_EPISODE_COUNT: 994
 EVAL_CKPT_PATH_DIR: "data/new_checkpoints"
-NUM_PROCESSES: 1
+NUM_PROCESSES: 8
 SENSORS: ["DEPTH_SENSOR"]
 CHECKPOINT_FOLDER: "data/new_checkpoints"
 NUM_DEMO_UPDATES: 0
-NUM_UPDATES: 10000
-NUM_REPLAY_UPDATES: 64
+NUM_UPDATES: 130000
+NUM_REPLAY_UPDATES: 8
 REPLAY_INTERVAL: 1
-REPLAY_MEMORY_SIZE: 10000
-LOG_INTERVAL: 1
-CHECKPOINT_INTERVAL: 1000
+REPLAY_MEMORY_SIZE: 32
+LOG_INTERVAL: 25
+CHECKPOINT_INTERVAL: 2000
 FP16: True
 
 RL:
@@ -28,8 +28,8 @@ RL:
     FINETUNE: False
     # ppo params
     clip_param: 0.2
-    ppo_epoch: 32
-    num_mini_batch: 1
+    ppo_epoch: 4
+    num_mini_batch: 8
     value_loss_coef: 0.5
     entropy_coef: 0.01
     lr: 2.5e-4

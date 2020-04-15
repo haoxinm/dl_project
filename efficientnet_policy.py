@@ -5,24 +5,88 @@ from habitat_baselines.rl.ddppo.policy.running_mean_and_var import (
     RunningMeanAndVar,
 )
 from habitat_baselines.rl.models.rnn_state_encoder import RNNStateEncoder
-from habitat_baselines.rl.ppo import Net, Policy
+from habitat_baselines.rl.ppo import Net  #, Policy
+from habitat_baselines.common.utils import CategoricalNet
 from torch.nn import functional as F
 from habitat_baselines.common.utils import CustomFixedCategorical
+
+
+class Policy(nn.Module):
+    def __init__(self, net, dim_actions):
+        super().__init__()
+        self.net = net
+        self.dim_actions = dim_actions
+
+        self.action_distribution = CategoricalNet(
+            self.net.output_size, self.dim_actions
+        )
+        self.critic = CriticHead(self.net.output_size)
+
+    def forward(self, *x):
+        raise NotImplementedError
+
+    def act(
+            self,
+            observations,
+            rnn_hidden_states,
+            prev_actions,
+            masks,
+            deterministic=False,
+    ):
+        features, rnn_hidden_states = self.net(
+            observations, rnn_hidden_states, prev_actions, masks
+        )
+        distribution = self.action_distribution(features)
+        value = self.critic(features)
+
+        if deterministic:
+            action = distribution.mode()
+        else:
+            action = distribution.sample()
+
+        action_log_probs = distribution.log_probs(action)
+
+        return value, action, action_log_probs, rnn_hidden_states
+
+    def get_value(self, observations, rnn_hidden_states, prev_actions, masks):
+        features, _ = self.net(
+            observations, rnn_hidden_states, prev_actions, masks
+        )
+        return self.critic(features)
+
+    def evaluate_actions(
+            self, observations, rnn_hidden_states, prev_actions, masks, action
+    ):
+        features, rnn_hidden_states = self.net(
+            observations, rnn_hidden_states, prev_actions, masks
+        )
+        distribution = self.action_distribution(features)
+        value = self.critic(features)
+
+        action_log_probs = distribution.log_probs(action.to(features.device))
+        distribution_entropy = distribution.entropy().mean()
+
+        return value, action_log_probs, distribution_entropy, rnn_hidden_states
 
 
 class LSTMHead(nn.Module):
     def __init__(self, input_size):
         super().__init__()
         self.lstm = nn.LSTM(input_size, 1)
-        nn.init.orthogonal_(self.lstm.weight)
-        nn.init.constant_(self.lstm.bias, 0)
-        self.hx = torch.randn(1)
-        self.cx = torch.randn(1)
+        self.hx = torch.randn(1, 1, 1)
+        self.cx = torch.randn(1, 1, 1)
+        self.reset()
+
+    def reset(self):
+        nn.init.xavier_normal_(self.lstm.all_weights[0][0])
+        nn.init.xavier_normal_(self.lstm.all_weights[0][1])
 
     def forward(self, x):
+        self.hx = self.hx.to(x.device)
+        self.cx = self.cx.to(x.device)
         output, (h, c) = self.lstm(x.unsqueeze(1), (self.hx, self.cx))
-        self.hx = h
-        self.cx = c
+        self.hx = h.detach()
+        self.cx = c.detach()
         return output.squeeze(1)
 
 
@@ -31,15 +95,20 @@ class LSTMCategorical(nn.Module):
         super().__init__()
 
         self.lstm = nn.LSTM(num_inputs, num_outputs)
-        nn.init.orthogonal_(self.lstm.weight)
-        nn.init.constant_(self.lstm.bias, 0)
-        self.hx = torch.randn(num_outputs)
-        self.cx = torch.randn(num_outputs)
+        self.reset()
+        self.hx = torch.randn(1, 1, num_outputs)
+        self.cx = torch.randn(1, 1, num_outputs)
+
+    def reset(self):
+        nn.init.xavier_normal_(self.lstm.all_weights[0][0])
+        nn.init.xavier_normal_(self.lstm.all_weights[0][1])
 
     def forward(self, x):
+        self.hx = self.hx.to(x.device)
+        self.cx = self.cx.to(x.device)
         output, (h, c) = self.lstm(x.unsqueeze(1), (self.hx, self.cx))
-        self.hx = h
-        self.cx = c
+        self.hx = h.detach()
+        self.cx = c.detach()
         return CustomFixedCategorical(logits=output.squeeze(1))
 
 
@@ -72,8 +141,8 @@ class PointNavEfficientNetPolicy(Policy):
             ),
             action_space.n,
         )
-        self.action_distribution = LSTMCategorical(self.net.output_size, self.dim_actions)
-        self.critic = LSTMHead(self.net.output_size)
+        # self.action_distribution = LSTMCategorical(self.net.output_size, self.dim_actions)
+        # self.critic = LSTMHead(self.net.output_size)
 
 
 class EfficientNetEncoder(nn.Module):
@@ -261,3 +330,18 @@ class PointNavEfficientNetNet(Net):
         x, rnn_hidden_states = self.state_encoder(x, rnn_hidden_states, masks)
 
         return x, rnn_hidden_states
+
+
+class CriticHead(nn.Module):
+    def __init__(self, input_size):
+        super().__init__()
+        self.fc = nn.Linear(input_size, 1)
+        nn.init.orthogonal_(self.fc.weight)
+        nn.init.constant_(self.fc.bias, 0)
+
+    def forward(self, x):
+        return self.fc(x)
+
+    def reset(self):
+        nn.init.orthogonal_(self.fc.weight)
+        nn.init.constant_(self.fc.bias, 0)
