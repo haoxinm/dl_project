@@ -9,6 +9,7 @@ from habitat_baselines.common.env_utils import construct_envs
 from habitat_baselines.common.environments import get_env_class
 from habitat_baselines.config.default import get_config
 from habitat.sims.habitat_simulator.actions import HabitatSimActions
+from util import util, html, visualizer
 
 try:
     matplotlib.use('TkAgg')
