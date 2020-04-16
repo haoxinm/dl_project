@@ -23,6 +23,7 @@ import os
 os.environ["SDL_VIDEODRIVER"] = "dummy"
 import pdb
 
+Vis = visualizer.Visualizer(name="haoliangjiang", display_winsize=400, display_port=8098)
 
 def display_arr(screen, arr, video_size, transpose):
     arr_min, arr_max = arr.min(), arr.max()
@@ -79,8 +80,10 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
             }
         If None, default key_to_action mapping for that env is used, if provided.
     """
-    env.reset()
-    rendered = env.render(mode='rgb_array')
+    observations = env.reset()
+    # rendered = env.render(mode='rgb_array')
+    pdb.set_trace()
+    Vis.display_current_results(observations["pointgoal_with_gps_compass"])
 
     if keys_to_action is None:
         if hasattr(env, 'get_keys_to_action'):
@@ -99,9 +102,9 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
     pressed_keys = []
     running = True
     env_done = True
-
-    screen = pygame.display.set_mode(video_size)
-    clock = pygame.time.Clock()
+#pygame stuff
+    # screen = pygame.display.set_mode(video_size)
+    # clock = pygame.time.Clock()
 
     while running:
         if env_done:
@@ -118,30 +121,32 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
                 if callback is not None:
                     callback(prev_obs, obs, action, rew, env_done, info)
         if obs is not None:
-            rendered = env.render(mode='rgb_array')
-            display_arr(screen, rendered, transpose=transpose, video_size=video_size)
+            Vis.display_current_results(observations["pointgoal_with_gps_compass"])
+            # rendered = env.render(mode='rgb_array')
+            # display_arr(screen, rendered, transpose=transpose, video_size=video_size)
 
-        # process pygame events
-        for event in pygame.event.get():
-            # test events, set key states
-            if event.type == pygame.KEYDOWN:
-                if event.key in relevant_keys:
-                    pressed_keys.append(event.key)
-                elif event.key == 27:
-                    running = False
-            elif event.type == pygame.KEYUP:
-                if event.key in relevant_keys:
-                    pressed_keys.remove(event.key)
-            elif event.type == pygame.QUIT:
-                running = False
-            elif event.type == VIDEORESIZE:
-                video_size = event.size
-                screen = pygame.display.set_mode(video_size)
-                print(video_size)
+#pygame stuff
+    #     # process pygame events
+    #     for event in pygame.event.get():
+    #         # test events, set key states
+    #         if event.type == pygame.KEYDOWN:
+    #             if event.key in relevant_keys:
+    #                 pressed_keys.append(event.key)
+    #             elif event.key == 27:
+    #                 running = False
+    #         elif event.type == pygame.KEYUP:
+    #             if event.key in relevant_keys:
+    #                 pressed_keys.remove(event.key)
+    #         elif event.type == pygame.QUIT:
+    #             running = False
+    #         elif event.type == VIDEORESIZE:
+    #             video_size = event.size
+    #             screen = pygame.display.set_mode(video_size)
+    #             print(video_size)
 
-        pygame.display.flip()
-        clock.tick(fps)
-    pygame.quit()
+    #     pygame.display.flip()
+    #     clock.tick(fps)
+    # pygame.quit()
 
 
 def main():
@@ -156,8 +161,7 @@ def main():
     keys_to_action[tuple(sorted([ord('\n')]))] = HabitatSimActions.STOP,
     keys_to_action[tuple(sorted([ord('\r')]))] = HabitatSimActions.STOP,
     print(keys_to_action)
-    import pdb
-    pdb.set_trace()
+    # pdb.set_trace()
 
 
     # play(env, keys_to_action=keys_to_action)
