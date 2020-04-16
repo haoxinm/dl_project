@@ -165,7 +165,7 @@ def main():
     # pdb.set_trace()
 
 
-    # play(env, keys_to_action=keys_to_action)
+    play(env, keys_to_action=keys_to_action)
     '''
     ACTIONS = env.action_spaces[0]
     SKIP_CONTROL = 0  # Use previous control decision SKIP_CONTROL times, that's how you
