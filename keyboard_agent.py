@@ -113,9 +113,9 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
                 print(env_done)
                 if callback is not None:
                     callback(prev_obs, obs, action, rew, env_done, info)
-        if obs is not None:
-            rendered = env.render(mode='rgb_array')
-            display_arr(screen, rendered, transpose=transpose, video_size=video_size)
+                if obs is not None:
+                    rendered = env.render(mode='rgb_array')
+                    display_arr(screen, rendered, transpose=transpose, video_size=video_size)
 
         # process pygame events
         for event in pygame.event.get():
