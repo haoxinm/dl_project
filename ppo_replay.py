@@ -461,9 +461,9 @@ class PPOReplayTrainer(PPOTrainer):
                 }
                 deltas["count"] = max(deltas["count"], 1.0)
 
-                writer.add_scalar(
-                    "reward", deltas["reward"] / deltas["count"], count_steps
-                )
+                # writer.add_scalar(
+                #     "reward", deltas["reward"] / deltas["count"], count_steps
+                # )
 
                 # Check to see if there are any metrics
                 # that haven't been logged yet
@@ -476,43 +476,43 @@ class PPOReplayTrainer(PPOTrainer):
                     writer.add_scalars("metrics", metrics, count_steps)
 
                 losses = [value_loss, action_loss]
-                writer.add_scalars(
-                    "losses",
-                    {k: l for l, k in zip(losses, ["value", "policy"])},
-                    count_steps,
-                )
+                # writer.add_scalars(
+                #     "losses",
+                #     {k: l for l, k in zip(losses, ["value", "policy"])},
+                #     count_steps,
+                # )
 
-                # log stats
-                if update > 0 and update % self.config.LOG_INTERVAL == 0:
-                    logger.info(
-                        "update: {}\tfps: {:.3f}\t".format(
-                            update, count_steps / (time.time() - t_start)
-                        )
-                    )
+                # # log stats
+                # if update > 0 and update % self.config.LOG_INTERVAL == 0:
+                #     logger.info(
+                #         "update: {}\tfps: {:.3f}\t".format(
+                #             update, count_steps / (time.time() - t_start)
+                #         )
+                #     )
 
-                    logger.info(
-                        "update: {}\tenv-time: {:.3f}s\tpth-time: {:.3f}s\t"
-                        "frames: {}".format(
-                            update, env_time, pth_time, count_steps
-                        )
-                    )
+                #     logger.info(
+                #         "update: {}\tenv-time: {:.3f}s\tpth-time: {:.3f}s\t"
+                #         "frames: {}".format(
+                #             update, env_time, pth_time, count_steps
+                #         )
+                #     )
 
-                    logger.info(
-                        "Average window size: {}  {}".format(
-                            len(window_episode_stats["count"]),
-                            "  ".join(
-                                "{}: {:.3f}".format(k, v / deltas["count"])
-                                for k, v in deltas.items()
-                                if k != "count"
-                            ),
-                        )
-                    )
+                #     logger.info(
+                #         "Average window size: {}  {}".format(
+                #             len(window_episode_stats["count"]),
+                #             "  ".join(
+                #                 "{}: {:.3f}".format(k, v / deltas["count"])
+                #                 for k, v in deltas.items()
+                #                 if k != "count"
+                #             ),
+                #         )
+                #     )
 
-                # checkpoint model
-                if update % self.config.CHECKPOINT_INTERVAL == 0:
-                    self.save_checkpoint(
-                        f"ckpt.{count_checkpoints}.pth", dict(step=count_steps)
-                    )
+                # # checkpoint model
+                # if update % self.config.CHECKPOINT_INTERVAL == 0:
+                #     self.save_checkpoint(
+                #         f"ckpt.{count_checkpoints}.pth", dict(step=count_steps)
+                #     )
                     count_checkpoints += 1
 
             self.envs.close()

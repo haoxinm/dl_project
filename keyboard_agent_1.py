@@ -83,8 +83,8 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
     """
     observations = env.reset()
     # rendered = env.render(mode='rgb_array')
-    pdb.set_trace()
-    Vis.display_current_results(observations["pointgoal_with_gps_compass"])
+    # pdb.set_trace()
+    Vis.display_current_results(observations)
 
     if keys_to_action is None:
         if hasattr(env, 'get_keys_to_action'):

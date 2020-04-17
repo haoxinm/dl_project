@@ -64,6 +64,8 @@ class Visualizer():
         self.win_size = display_winsize
         self.name = name
         self.port = display_port
+        self.history = {}
+        self.history["RGB"] = []
           # connect to a visdom server given <display_port> and <display_server>
         import visdom
         self.vis = visdom.Visdom(server=display_server, port=display_port, env=display_env)
@@ -92,6 +94,7 @@ class Visualizer():
             save_result (bool) - - if save the current results to an HTML file
         """
           # show images in the browser using visdom
+        label = "RGB"
         try:
             label = "RGB"
             self.vis.image(image_numpy.transpose([2, 0, 1]), opts=dict(title=label))
@@ -100,7 +103,7 @@ class Visualizer():
             self.create_visdom_connections()
 
         # save images to the disk
-        history["RGB"].append(image)
+        self.history["RGB"].append(image)
         img_path = 'current_%s.png' % (label)
 
         # update website
