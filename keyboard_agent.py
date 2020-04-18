@@ -147,6 +147,7 @@ def main():
     config = get_config('ppo_replay_pointnav.yaml', None)
 
     env = construct_envs(config, get_env_class(config.ENV_NAME))
+
     # env = baseline_registry.get_env(config.ENV_NAME)
     keys_to_action = dict()
     keys_to_action[tuple(sorted([ord('w')]))] = HabitatSimActions.MOVE_FORWARD,
