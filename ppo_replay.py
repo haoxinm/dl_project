@@ -173,6 +173,7 @@ class PPOReplayTrainer(PPOTrainer):
         pth_time += time.time() - t_sample_action
 
         t_step_env = time.time()
+        best_action = self.envs.call(["get_best_action"] * self.envs.num_envs)
         outputs = self.envs.step([a[0].item() for a in actions])
         observations, rewards, dones, infos = [list(x) for x in zip(*outputs)]
 
