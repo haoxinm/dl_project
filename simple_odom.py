@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -7,6 +9,7 @@ from habitat_baselines.common.utils import Flatten
 from habitat_baselines.rl.models.rnn_state_encoder import RNNStateEncoder
 from habitat_baselines.common.utils import CategoricalNet
 from habitat_baselines.rl.ppo import Net
+from torch import optim
 
 
 class SimpleCNN(nn.Module):
@@ -40,11 +43,11 @@ class SimpleCNN(nn.Module):
         if self._n_input_rgb > 0:
             cnn_dims = np.array(
                 observation_space.spaces["rgb"].shape[:2], dtype=np.float32
-            )
+            )//2
         elif self._n_input_depth > 0:
             cnn_dims = np.array(
                 observation_space.spaces["depth"].shape[:2], dtype=np.float32
-            )
+            )//2
 
         if self.is_blind:
             self.cnn = nn.Sequential()
@@ -155,9 +158,11 @@ class SimpleCNN(nn.Module):
 
 
 class SimpleOdomNet(Net):
-    def __init__(self, observation_space, action_space, config):
+    def __init__(self, observation_space, action_space, config,
+                 num_recurrent_layers, lr, eps):
         super().__init__()
         self.config = config
+        self.goal_sensor_uuid = config.goal_sensor_uuid
         self.prev_action_embedding = nn.Embedding(action_space.n + 1, 16)
         self._n_prev_action = 16
 
@@ -166,7 +171,7 @@ class SimpleOdomNet(Net):
         )
         self.tgt_embeding = nn.Linear(self._n_input_goal, 16)
         self._n_input_goal = 16
-        self._hidden_size = config.ODOM.hidden_size
+        self._hidden_size = config.hidden_size
         rnn_input_size = self._n_input_goal + self._n_prev_action
 
         self.visual_encoder = SimpleCNN(observation_space, self._hidden_size)
@@ -174,14 +179,18 @@ class SimpleOdomNet(Net):
         self.state_encoder = RNNStateEncoder(
             (0 if self.is_blind else self._hidden_size) + rnn_input_size,
             self._hidden_size,
-            rnn_type=config.ODOM.rnn_type,
-            num_layers=config.ODOM.num_recurrent_layers,
+            rnn_type=config.rnn_type,
+            num_layers=num_recurrent_layers,
         )
 
         self.odom_distribution = CategoricalNet(
             self._hidden_size, 2
         )
-
+        self.optimizer = optim.Adam(
+            list(filter(lambda p: p.requires_grad, self.parameters())),
+            lr=lr,
+            eps=eps,
+        )
         self.train()
 
     @property
@@ -244,5 +253,78 @@ class SimpleOdomNet(Net):
             goal = distribution.sample()
 
         goal_log_probs = distribution.log_probs(goal)
+        distribution_entropy = distribution.entropy().mean()
 
-        return goal, goal_log_probs, rnn_hidden_states
+        return goal, goal_log_probs, distribution_entropy, rnn_hidden_states
+
+
+    def update(self, rollouts, config):
+        goal_loss_epoch = 0.
+        prob_loss_epoch = 0.
+        dist_entropy_epoch = 0.
+
+        for e in range(self.config.odom_epoch):
+            data_generator = rollouts.recurrent_generator(config.NUM_PROCESSES, self.config.num_mini_batch)
+
+            for sample in data_generator:
+                (
+                    observations_batch,
+                    recurrent_hidden_states_batch,
+                    actions_batch,
+                    goals_batch,
+                    masks_batch,
+                    old_goal_log_probs_batch,
+                ) = sample
+                (
+                    pred_goals,
+                    goal_log_probs,
+                    dist_entropy,
+                    _,
+                ) = self.forward(
+                    observations_batch,
+                    recurrent_hidden_states_batch,
+                    actions_batch,
+                    masks_batch,
+                )
+                ratio = -torch.exp(
+                    goal_log_probs - old_goal_log_probs_batch
+                ).mean()
+                goal_loss = 0.5 * (pred_goals - goals_batch).pow(2).mean()
+                total_loss = (
+                        goal_loss
+                        + ratio * config.ODOM.ratio_loss_coef
+                        - dist_entropy * config.ODOM.entropy_coef
+                )
+                self.before_backward(total_loss)
+                total_loss.backward()
+                self.after_backward(total_loss)
+
+                self.before_step()
+                self.optimizer.step()
+                self.after_step()
+
+                prob_loss_epoch += ratio.item()
+                goal_loss_epoch += goal_loss.item()
+                dist_entropy_epoch += dist_entropy.item()
+
+        num_updates = self.config.odom_epoch * self.config.num_mini_batch
+
+        prob_loss_epoch /= num_updates
+        goal_loss_epoch /= num_updates
+        dist_entropy_epoch /= num_updates
+
+        return goal_loss_epoch, prob_loss_epoch, dist_entropy_epoch
+
+    def before_backward(self, loss):
+        pass
+
+    def after_backward(self, loss):
+        pass
+
+    def before_step(self):
+        nn.utils.clip_grad_norm_(
+            self.parameters(), self.config.max_grad_norm
+        )
+
+    def after_step(self):
+        pass

@@ -1,0 +1,53 @@
+BASE_TASK_CONFIG_PATH: "train_odom.rgbd.yaml"
+TRAINER_NAME: "odometry"
+ENV_NAME: "NavRLEnv"
+SIMULATOR_GPU_ID: 0
+TORCH_GPU_ID: 0
+VIDEO_OPTION: []
+TENSORBOARD_DIR: "tb"
+VIDEO_DIR: "video_dir"
+TEST_EPISODE_COUNT: 994
+EVAL_CKPT_PATH_DIR: "data/new_checkpoints"
+NUM_PROCESSES: 5
+SENSORS: ["DEPTH_SENSOR"]
+CHECKPOINT_FOLDER: "data/new_checkpoints"
+NUM_DEMO_UPDATES: 0
+NUM_UPDATES: 130000
+NUM_REPLAY_UPDATES: 8
+REPLAY_INTERVAL: 1
+REPLAY_MEMORY_SIZE: 32
+LOG_INTERVAL: 25
+CHECKPOINT_INTERVAL: 2000
+FP16: True
+
+ODOM:
+  # ppo params
+  goal_sensor_uuid: pointgoal
+  clip_param: 0.2
+  odom_epoch: 1
+  num_mini_batch: 4
+  ratio_loss_coef: 0.1
+  entropy_coef: 0.01
+  lr: 2.5e-4
+  eps: 1.0e-5
+  max_grad_norm: 0.2
+  num_steps: 256
+  use_linear_clip_decay: False
+  use_linear_lr_decay: False
+
+  hidden_size: 128
+  pretrained: False
+  # Visual encoder backbone
+  pretrained_weights: None
+  # Initialize with pretrained weights
+  pretrained_actor: False
+  # Initialize just the visual encoder backbone with pretrained weights
+  pretrained_encoder: False
+  # Whether or not the visual encoder backbone will be trained.
+  train_encoder: True
+  # Whether or not to reset the critic linear layer
+  reset_critic: True
+
+  # Model parameters
+  rnn_type: LSTM
+  num_recurrent_layers: 1

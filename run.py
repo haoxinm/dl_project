@@ -12,6 +12,7 @@ import numpy as np
 from habitat_baselines.common.baseline_registry import baseline_registry
 from habitat_baselines.config.default import get_config
 from ppo_replay import PPOReplayTrainer
+from odometry_trainer import OdomTrainer
 
 
 def main():
