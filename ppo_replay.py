@@ -23,6 +23,8 @@ from efficientnet_policy import PointNavEfficientNetPolicy
 from replay_buffer import RolloutReplayBuffer
 from habitat.core.utils import try_cv2_import
 from habitat.utils.visualizations import maps
+from habitat.sims.habitat_simulator.actions import HabitatSimActions
+
 cv2 = try_cv2_import()
 
 
@@ -53,16 +55,15 @@ def draw_top_down_map(info, heading, output_size):
 
 @baseline_registry.register_trainer(name="ppo_replay")
 class PPOReplayTrainer(PPOTrainer):
-
     METRICS_BLACKLIST = {}  # "top_down_map", "collisions.is_collision"
 
     def __init__(self, config=None):
         super().__init__(config)
         self.memory = RolloutReplayBuffer(config.REPLAY_MEMORY_SIZE)
 
-    def insert_memory(self, rollout, stat):
+    def insert_memory(self, rollout):
         # for rollout, stat in memories:
-        self.memory.insert(rollout, stat)
+        self.memory.insert(rollout)
 
     def _setup_actor_critic_agent(self, ppo_cfg: Config) -> None:
         r"""Sets up actor critic and agent for PPO.
@@ -75,30 +76,30 @@ class PPOReplayTrainer(PPOTrainer):
         """
         logger.add_filehandler(self.config.LOG_FILE)
 
-        self.actor_critic = PointNavEfficientNetPolicy(
-            observation_space=self.envs.observation_spaces[0],
-            action_space=self.envs.action_spaces[0],
-            hidden_size=ppo_cfg.hidden_size,
-            rnn_type=self.config.RL.PPO.rnn_type,
-            num_recurrent_layers=self.config.RL.PPO.num_recurrent_layers,
-            backbone=self.config.RL.PPO.backbone,
-            goal_sensor_uuid=self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID,
-            normalize_visual_inputs="rgb"
-                                    in self.envs.observation_spaces[0].spaces,
-            pretrained=self.config.RL.PPO.PRETRAINED,
-            finetune=self.config.RL.PPO.FINETUNE,
-        )
-        # self.actor_critic = PointNavBaselinePolicy(
+        # self.actor_critic = PointNavEfficientNetPolicy(
         #     observation_space=self.envs.observation_spaces[0],
         #     action_space=self.envs.action_spaces[0],
         #     hidden_size=ppo_cfg.hidden_size,
+        #     rnn_type=self.config.RL.PPO.rnn_type,
+        #     num_recurrent_layers=self.config.RL.PPO.num_recurrent_layers,
+        #     backbone=self.config.RL.PPO.backbone,
         #     goal_sensor_uuid=self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID,
+        #     normalize_visual_inputs="rgb"
+        #                             in self.envs.observation_spaces[0].spaces,
+        #     pretrained=self.config.RL.PPO.PRETRAINED,
+        #     finetune=self.config.RL.PPO.FINETUNE,
         # )
+        self.actor_critic = PointNavBaselinePolicy(
+            observation_space=self.envs.observation_spaces[0],
+            action_space=self.envs.action_spaces[0],
+            hidden_size=ppo_cfg.hidden_size,
+            goal_sensor_uuid=self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID,
+        )
         self.actor_critic.to(self.device)
 
         if (
-            self.config.RL.PPO.pretrained_encoder
-            or self.config.RL.PPO.pretrained_actor
+                self.config.RL.PPO.pretrained_encoder
+                or self.config.RL.PPO.pretrained_actor
         ):
             pretrained_state = torch.load(
                 self.config.RL.PPO.pretrained_weights, map_location="cpu"
@@ -107,7 +108,7 @@ class PPOReplayTrainer(PPOTrainer):
         if self.config.RL.PPO.pretrained_actor:
             self.actor_critic.load_state_dict(
                 {
-                    k[len("actor_critic.") :]: v
+                    k[len("actor_critic."):]: v
                     for k, v in pretrained_state["state_dict"].items()
                 }
             )
@@ -115,7 +116,7 @@ class PPOReplayTrainer(PPOTrainer):
             prefix = "actor_critic.net.visual_encoder."
             self.actor_critic.net.visual_encoder.load_state_dict(
                 {
-                    k[len(prefix) :]: v
+                    k[len(prefix):]: v
                     for k, v in pretrained_state["state_dict"].items()
                     if k.startswith(prefix)
                 }
@@ -145,7 +146,7 @@ class PPOReplayTrainer(PPOTrainer):
         )
 
     def _collect_rollout_step(
-        self, rollouts, current_episode_reward, running_episode_stats
+            self, rollouts, current_episode_reward, running_episode_stats, update=0,
     ):
         pth_time = 0.0
         env_time = 0.0
@@ -173,7 +174,26 @@ class PPOReplayTrainer(PPOTrainer):
         pth_time += time.time() - t_sample_action
 
         t_step_env = time.time()
-        best_action = self.envs.call(["get_best_action"] * self.envs.num_envs)
+        best_actions = torch.tensor(self.envs.call(["get_best_action"] * self.envs.num_envs),
+                                    device=actions.device)
+        # tf = False
+        # if np.random.random() < 1. - (update / self.config.NUM_TF_UPDATES) * \
+        #         (update > 2 * self.config.NUM_REPLAY_UPDATES):
+        #     # tf = True
+        #     actions = best_actions
+        # else:
+        action_list = [HabitatSimActions.MOVE_FORWARD, HabitatSimActions.TURN_LEFT, HabitatSimActions.TURN_RIGHT]
+        punishment = torch.zeros(actions.shape)
+        if update < self.config.NUM_TAMER_UPDATES // 2:
+            for i in range(self.envs.num_envs):
+                if step_observation[self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID][i][0] > \
+                        self.config.TASK_CONFIG.TASK.SUCCESS_DISTANCE and \
+                        actions[i] == HabitatSimActions.STOP:
+                    if np.random.random() < 0.5 * (1 - update < self.config.NUM_TAMER_UPDATES // 2):
+                        actions[i] = torch.tensor(np.random.choice(action_list), dtype=actions.dtype, device=actions.device)
+                    else:
+                        punishment[i] = torch.tensor(self.config.RL.EARLY_STOP_PUNISHMENT)
+        tamer_rewards = (2 * (actions == best_actions) - 1) * self.config.RL.TAMER_REWARD
         outputs = self.envs.step([a[0].item() for a in actions])
         observations, rewards, dones, infos = [list(x) for x in zip(*outputs)]
 
@@ -186,13 +206,15 @@ class PPOReplayTrainer(PPOTrainer):
                 rewards[i] += self.config.RL.COLLISION_REWARD
 
         env_time += time.time() - t_step_env
-
         t_update_stats = time.time()
         batch = batch_obs(observations, device=self.device)
         rewards = torch.tensor(
             rewards, dtype=torch.float, device=current_episode_reward.device
         )
         rewards = rewards.unsqueeze(1)
+        # if not tf:
+        rewards += tamer_rewards.to(rewards.device) * (update < self.config.NUM_TAMER_UPDATES)
+        rewards += punishment.to(rewards.dtype).to(rewards.device)
 
         masks = torch.tensor(
             [[0.0] if done else [1.0] for done in dones],
@@ -235,7 +257,6 @@ class PPOReplayTrainer(PPOTrainer):
         return pth_time, env_time, self.envs.num_envs, top_down_map
 
     def _update_agent_memory(self, ppo_cfg, rollouts):
-        t_update_model = time.time()
         with torch.no_grad():
             last_observation = {
                 k: v[rollouts.step] for k, v in rollouts.observations.items()
@@ -255,28 +276,19 @@ class PPOReplayTrainer(PPOTrainer):
 
         # rollouts.after_update()
 
-        return (
-            time.time() - t_update_model,
-            value_loss,
-            action_loss,
-            dist_entropy,
-        )
+        # return (
+        #     time.time() - t_update_model,
+        #     value_loss,
+        #     action_loss,
+        #     dist_entropy,
+        # )
 
-    def replay(self, num_updates, ppo_cfg, lr_scheduler, pth_time, writer,
-               count_steps):
+    def replay(self, num_updates, ppo_cfg, lr_scheduler):
         print(".....start memory replay for {} updates.....".format(num_updates))
-        env_time = 0
-        window_episode_stats = defaultdict(
-            lambda: deque(maxlen=ppo_cfg.reward_window_size)
-        )
-        rollouts_memories, cpu_stats_memories = self.memory.recall(num_updates)
+        rollouts_memories = self.memory.recall(num_updates)
         for update in range(num_updates):
-            count_steps += 1
-            rollouts_memory, cpu_stats = rollouts_memories[update], cpu_stats_memories[update]
+            rollouts_memory = rollouts_memories[update]
             rollouts_memory.to(self.env_device)
-            running_episode_stats = dict()
-            for key, value in cpu_stats.items():
-                running_episode_stats[key] = value.to(self.device)
             if ppo_cfg.use_linear_lr_decay:
                 lr_scheduler.step()
             if ppo_cfg.use_linear_clip_decay:
@@ -284,45 +296,14 @@ class PPOReplayTrainer(PPOTrainer):
                     update, self.config.NUM_UPDATES
                 )
             # torch.cuda.empty_cache()
-            (
-                delta_pth_time,
-                value_loss,
-                action_loss,
-                dist_entropy,
-            ) = self._update_agent_memory(ppo_cfg, rollouts_memory)
+            # (
+            #     delta_pth_time,
+            #     value_loss,
+            #     action_loss,
+            #     dist_entropy,
+            # ) = \
+            self._update_agent_memory(ppo_cfg, rollouts_memory)
             rollouts_memory.to('cpu')
-            pth_time += delta_pth_time
-
-            for k, v in running_episode_stats.items():
-                window_episode_stats[k].append(v.clone())
-
-            deltas = {
-                k: (
-                    (v[-1] - v[0]).sum().item()
-                    if len(v) > 1
-                    else v[0].sum().item()
-                )
-                for k, v in window_episode_stats.items()
-            }
-            deltas["count"] = max(deltas["count"], 1.0)
-
-            # Check to see if there are any metrics
-            # that haven't been logged yet
-            metrics = {
-                k: v / deltas["count"]
-                for k, v in deltas.items()
-                if k not in {"reward", "count"}
-            }
-            if len(metrics) > 0:
-                writer.add_scalars("metrics", metrics, count_steps)
-
-            losses = [value_loss, action_loss]
-            writer.add_scalars(
-                "losses",
-                {k: l for l, k in zip(losses, ["value", "policy"])},
-                count_steps,
-            )
-
 
     def train(self) -> None:
         r"""Main method for training PPO.
@@ -401,18 +382,17 @@ class PPOReplayTrainer(PPOTrainer):
         )
 
         with TensorboardWriter(
-            self.config.TENSORBOARD_DIR, flush_secs=self.flush_secs
+                self.config.TENSORBOARD_DIR, flush_secs=self.flush_secs
         ) as writer:
 
             # train with human demonstrations
-            self.replay(self.config.NUM_DEMO_UPDATES, ppo_cfg, lr_scheduler,
-                        pth_time, writer, count_steps)
+            self.replay(self.config.NUM_DEMO_UPDATES, ppo_cfg, lr_scheduler)
 
             # train with agent experiences
             for update in range(self.config.NUM_UPDATES):
-                if update != 0 and update % self.config.REPLAY_INTERVAL == 0 and len(self.memory)>=self.config.NUM_REPLAY_UPDATES:
-                    self.replay(self.config.NUM_REPLAY_UPDATES, ppo_cfg, lr_scheduler,
-                                pth_time, writer, count_steps)
+                if update != 0 and self.config.REPLAY_INTERVAL > 0 and update % self.config.REPLAY_INTERVAL == 0 and len(
+                        self.memory) > self.config.NUM_REPLAY_UPDATES:
+                    self.replay(self.config.NUM_REPLAY_UPDATES, ppo_cfg, lr_scheduler)
 
                 if ppo_cfg.use_linear_lr_decay:
                     lr_scheduler.step()
@@ -429,15 +409,15 @@ class PPOReplayTrainer(PPOTrainer):
                         delta_steps,
                         top_down_map,
                     ) = self._collect_rollout_step(
-                        rollouts, current_episode_reward, running_episode_stats
-                    )
+                        rollouts, current_episode_reward, running_episode_stats, update)
                     for i in range(len(top_down_map)):
                         writer.add_image('top down map-env{}'.format(i), top_down_map[i],
                                          step + update * ppo_cfg.num_steps)
                     pth_time += delta_pth_time
                     env_time += delta_env_time
                     count_steps += delta_steps
-                    self.insert_memory(rollouts, running_episode_stats)
+                if self.config.REPLAY_INTERVAL > 0:
+                    self.insert_memory(rollouts)
 
                 # torch.cuda.empty_cache()
                 # rollouts.to(self.device)
@@ -573,10 +553,10 @@ class PPODistributed(PPO):
                 adv_targ = adv_targ.to(ratio.device)
                 surr1 = ratio * adv_targ
                 surr2 = (
-                    torch.clamp(
-                        ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
-                    )
-                    * adv_targ
+                        torch.clamp(
+                            ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
+                        )
+                        * adv_targ
                 )
                 action_loss = -torch.min(surr1, surr2).mean()
 
@@ -584,24 +564,24 @@ class PPODistributed(PPO):
                     value_preds_batch = value_preds_batch.to(values.device)
                     return_batch = return_batch.to(values.device)
                     value_pred_clipped = value_preds_batch + (
-                        values - value_preds_batch
+                            values - value_preds_batch
                     ).clamp(-self.clip_param, self.clip_param)
                     value_losses = (values - return_batch).pow(2)
                     value_losses_clipped = (
-                        value_pred_clipped - return_batch
+                            value_pred_clipped - return_batch
                     ).pow(2)
                     value_loss = (
-                        0.5
-                        * torch.max(value_losses, value_losses_clipped).mean()
+                            0.5
+                            * torch.max(value_losses, value_losses_clipped).mean()
                     )
                 else:
                     value_loss = 0.5 * (return_batch - values).pow(2).mean()
 
                 self.optimizer.zero_grad()
                 total_loss = (
-                    value_loss * self.value_loss_coef
-                    + action_loss
-                    - dist_entropy * self.entropy_coef
+                        value_loss * self.value_loss_coef
+                        + action_loss
+                        - dist_entropy * self.entropy_coef
                 )
 
                 self.before_backward(total_loss)

@@ -13,6 +13,7 @@ from habitat_baselines.common.baseline_registry import baseline_registry
 from habitat_baselines.config.default import get_config
 from ppo_replay import PPOReplayTrainer
 from odometry_trainer import OdomTrainer
+from dlprojectenv import DLProjectRLENV
 
 
 def main():
