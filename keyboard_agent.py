@@ -32,7 +32,7 @@ def display_arr(screen, arr, video_size, transpose, obs=None, info=None):
 	screen.blit(pyg_img, (0,0))
 	# pdb.set_trace()
 	# try:
-	if obs is None or info is None:
+	if obs is not None and info is not None:
 		map_ = pygame.surfarray.make_surface(np.transpose(draw_top_down_map(info[0], obs[0]["heading"][0], obs[0]['depth'].shape[0]), [2, 0, 1]))
 		screen.blit(map_, (video_size[0]/2.0,video_size[1]/2.0))
 	# except:
