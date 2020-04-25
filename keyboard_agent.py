@@ -84,7 +84,7 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
         If None, default key_to_action mapping for that env is used, if provided.
     """
     obs = env.reset()
-    pdb.set_trace()
+    # pdb.set_trace()
     rendered = env.render(mode='rgb_array')
 
     if keys_to_action is None:
@@ -129,7 +129,7 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
         else:
             action = keys_to_action.get(tuple(sorted(pressed_keys)), (-1,))[0]
             prev_obs = obs
-            # action = 1
+            action = 1
             print(action)
             if action>=0:
                 outputs = env.step([action])
