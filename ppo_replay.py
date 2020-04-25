@@ -43,14 +43,14 @@ def draw_top_down_map(info, heading, output_size):
     map_agent_pos = np.round(
         map_agent_pos * new_map_size / original_map_size
     ).astype(np.int32)
-    pdb.set_trace()
+    # pdb.set_trace()
     top_down_map = maps.draw_agent(
         top_down_map,
         map_agent_pos,
         heading - np.pi / 2,
         agent_radius_px=top_down_map.shape[0] / 40,
     )
-    pdb.set_trace()
+    # pdb.set_trace()
     return top_down_map
 
 
