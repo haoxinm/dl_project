@@ -513,7 +513,7 @@ class PPOReplayTrainer(PPOTrainer):
                 #     self.save_checkpoint(
                 #         f"ckpt.{count_checkpoints}.pth", dict(step=count_steps)
                 #     )
-                    count_checkpoints += 1
+                    # count_checkpoints += 1
 
             self.envs.close()
 
