@@ -24,6 +24,7 @@ from replay_buffer import RolloutReplayBuffer
 from habitat.core.utils import try_cv2_import
 from habitat.utils.visualizations import maps
 cv2 = try_cv2_import()
+import pdb
 
 
 def draw_top_down_map(info, heading, output_size):
