@@ -107,7 +107,7 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
         else:
             action = keys_to_action.get(tuple(sorted(pressed_keys)), (-1,))[0]
             prev_obs = obs
-            action = 
+            # action = 1
             print(action)
             if action>=0:
                 outputs = env.step([action])
