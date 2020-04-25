@@ -109,6 +109,7 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
 
     while running:
         if env_done:
+            print(env_done)
             env_done = False
             obs = env.reset()
         else:
@@ -118,7 +119,8 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
             if action>=0:
                 outputs = env.step([action])
                 obs, rew, env_done, info = [list(x) for x in zip(*outputs)]
-                print(env_done)
+                pdb.set_trace()
+                # print(env_done)
                 if callback is not None:
                     callback(prev_obs, obs, action, rew, env_done, info)
         if obs is not None:

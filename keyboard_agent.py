@@ -18,15 +18,23 @@ except ImportError as e:
     plt = None
 
 from pygame.locals import VIDEORESIZE
+import pdb
+from ppo_replay import draw_top_down_map
 
 
-def display_arr(screen, arr, video_size, transpose):
+def display_arr(screen, arr, video_size, transpose, obs=None, info=None):
     arr_min, arr_max = arr.min(), arr.max()
     arr = 255.0 * (arr - arr_min) / (arr_max - arr_min)
     pyg_img = pygame.surfarray.make_surface(arr.swapaxes(0, 1) if transpose else arr)
     pyg_img = pygame.transform.scale(pyg_img, video_size)
     screen.blit(pyg_img, (0,0))
-
+    pdb.set_trace()
+    if obs is None or info is None:
+        map_ = pygame.surfarray.make_surface(np.transpose(draw_top_down_map(
+                infos[i], observations[i]["heading"][0], observations[i]['depth'].shape[0]
+            ), [2, 0, 1]))
+        screen.blit(map_, (video_size[0]/2.0,video_size[1]/2.0))
+    pdb.set_trace()
 
 def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=None):
     """Allows one to play the game using keyboard.
@@ -89,7 +97,7 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
                           "please specify one manually"
     relevant_keys = set(sum(map(list, keys_to_action.keys()), []))
 
-    video_size = [rendered.shape[1], rendered.shape[0]]
+    video_size = [rendered.shape[1]*2, rendered.shape[0]*2]
     if zoom is not None:
         video_size = int(video_size[0] * zoom), int(video_size[1] * zoom)
 
@@ -100,8 +108,22 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
     screen = pygame.display.set_mode(video_size)
     clock = pygame.time.Clock()
 
+    #dummy run
+    # obs = env.reset()
+    # action = 1
+    # prev_obs = obs
+    # outputs = env.step([action])
+    # obs, rew, env_done, info = [list(x) for x in zip(*outputs)]
+    # rendered = env.render(mode='rgb_array')
+    # env_done = True
+
+    # screen = pygame.display.set_mode([video_size[0]*2, video_size[1]*2])
+    # clock = pygame.time.Clock()
+
+    #formal run
     while running:
         if env_done:
+            print(env_done)
             env_done = False
             obs = env.reset()
         else:
@@ -117,7 +139,7 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
                     callback(prev_obs, obs, action, rew, env_done, info)
                 if obs is not None:
                     rendered = env.render(mode='rgb_array')
-                    display_arr(screen, rendered, transpose=transpose, video_size=video_size)
+                    display_arr(screen, rendered, transpose=transpose, video_size=video_size, obs=obs, info=info)
 
         # process pygame events
         for event in pygame.event.get():

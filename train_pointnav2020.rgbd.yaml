@@ -50,6 +50,6 @@ TASK:
 
 DATASET:
   TYPE: PointNav-v1
-  SPLIT: train
+  SPLIT: val_mini
   DATA_PATH: data/pointnav_gibson_v2/{split}/{split}.json.gz
   SCENES_DIR: "data/scene_data/"
