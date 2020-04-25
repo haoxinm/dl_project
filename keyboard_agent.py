@@ -143,7 +143,7 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
 			if action>=0:
 				outputs = env.step([action])
 				obs, rew, env_done, info = [list(x) for x in zip(*outputs)]
-				pdb.set_trace()
+				# pdb.set_trace()
 				try:
 					print("obs length:", len(obs))
 					print("info length:", len(info))
@@ -154,7 +154,7 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
 					callback(prev_obs, obs, action, rew, env_done, info)
 				if obs is not None:
 					# rendered = env.render(mode='rgb_array')
-					# obs[]
+					rendered = obs[0]["rgb"]
 					display_arr(screen, rendered, transpose=transpose, video_size=video_size, obs=obs, info=info)
 
 		# process pygame events
