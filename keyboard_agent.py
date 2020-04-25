@@ -32,8 +32,8 @@ def display_arr(screen, arr, video_size, transpose, obs=None, info=None):
 	# screen.blit(pyg_img, (0,0))
 	img = draw_top_down_map(info[0], obs[0]["heading"][0], obs[0]['depth'].shape[0])
 	map_ = pygame.surfarray.make_surface(img)
-	screen.blit(map_, (video_size[0],video_size[1]))
-	print(np.average(img))
+	screen.blit(map_, (0, 0))
+	# print(np.average(img))
 
 	# pdb.set_trace()
 	# try:
