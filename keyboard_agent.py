@@ -138,6 +138,8 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
                 try:
                     print("obs length:", len(obs))
                     print("info length:", len(info))
+                except:
+                    print("notworking")
                 print(env_done)
                 if callback is not None:
                     callback(prev_obs, obs, action, rew, env_done, info)
