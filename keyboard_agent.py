@@ -28,14 +28,16 @@ def display_arr(screen, arr, video_size, transpose, obs=None, info=None):
 	arr_min, arr_max = arr.min(), arr.max()
 	arr = 255.0 * (arr - arr_min) / (arr_max - arr_min)
 	pyg_img = pygame.surfarray.make_surface(arr.swapaxes(0, 1) if transpose else arr)
-	pyg_img = pygame.transform.scale(pyg_img, video_size)
-	screen.blit(pyg_img, (0,0))
-	pdb.set_trace()
+	# pyg_img = pygame.transform.scale(pyg_img, video_size)
+	# screen.blit(pyg_img, (0,0))
+	map_ = pygame.surfarray.make_surface(draw_top_down_map(info[0], obs[0]["heading"][0], obs[0]['depth'].shape[0]))
+	screen.blit(map_, (video_size[0],video_size[1]))
+	# pdb.set_trace()
 	# try:
-	if obs is not None and info is not None:
-		img = np.transpose(draw_top_down_map(info[0], obs[0]["heading"][0], obs[0]['depth'].shape[0]), [2, 0, 1])
-		map_ = pygame.surfarray.make_surface(np.transpose(draw_top_down_map(info[0], obs[0]["heading"][0], obs[0]['depth'].shape[0]), [2, 0, 1]))
-		screen.blit(map_, (video_size[0]/2.0,video_size[1]/2.0))
+	# if obs is not None and info is not None:
+	# 	# img = np.transpose(draw_top_down_map(info[0], obs[0]["heading"][0], obs[0]['depth'].shape[0]), [2, 0, 1])
+	# 	map_ = pygame.surfarray.make_surface(draw_top_down_map(info[0], obs[0]["heading"][0], obs[0]['depth'].shape[0]))
+	# 	screen.blit(map_, (video_size[0],video_size[1]))
 	# except:
 	# 	pdb.set_trace()
 
