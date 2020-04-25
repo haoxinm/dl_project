@@ -140,8 +140,8 @@ def play(env, transpose=True, fps=30, zoom=None, callback=None, keys_to_action=N
 			action = [1,1,1,2,2,2]
 			print(action)
 			print(env_done)
-			if action>=0:
-				outputs = env.step([action])
+			if len(action)>=0:
+				outputs = env.step(action)
 				obs, rew, env_done, info = [list(x) for x in zip(*outputs)]
 				pdb.set_trace()
 				try:
