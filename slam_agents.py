@@ -10,6 +10,7 @@ import random
 import sys
 import time
 from math import pi
+import pdb
 
 import numpy as np
 import orbslam2
@@ -74,16 +75,19 @@ def make_good_config_for_orbslam2(config):
     config.SIMULATOR.RGB_SENSOR.HEIGHT = 256
     config.SIMULATOR.DEPTH_SENSOR.WIDTH = 256
     config.SIMULATOR.DEPTH_SENSOR.HEIGHT = 256
-    config.TRAINER.ORBSLAM2.CAMERA_HEIGHT = config.SIMULATOR.DEPTH_SENSOR.POSITION[
+    
+    config.ORBSLAM2._immutable(False)
+
+    config.ORBSLAM2.CAMERA_HEIGHT = config.SIMULATOR.DEPTH_SENSOR.POSITION[
         1
     ]
-    config.TRAINER.ORBSLAM2.H_OBSTACLE_MIN = (
-        0.3 * config.TRAINER.ORBSLAM2.CAMERA_HEIGHT
+    config.ORBSLAM2.H_OBSTACLE_MIN = (
+        0.3 * config.ORBSLAM2.CAMERA_HEIGHT
     )
-    config.TRAINER.ORBSLAM2.H_OBSTACLE_MAX = (
-        1.0 * config.TRAINER.ORBSLAM2.CAMERA_HEIGHT
+    config.ORBSLAM2.H_OBSTACLE_MAX = (
+        1.0 * config.ORBSLAM2.CAMERA_HEIGHT
     )
-    config.TRAINER.ORBSLAM2.MIN_PTS_IN_OBSTACLE = (
+    config.ORBSLAM2.MIN_PTS_IN_OBSTACLE = (
         config.SIMULATOR.DEPTH_SENSOR.WIDTH / 2.0
     )
     return
@@ -173,6 +177,7 @@ class ORBSLAM2Agent(RandomAgent):
         self.num_actions = config.NUM_ACTIONS
         self.dist_threshold_to_stop = config.DIST_TO_STOP
         self.slam_vocab_path = config.SLAM_VOCAB_PATH
+        pdb.set_trace()
         assert os.path.isfile(self.slam_vocab_path)
         self.slam_settings_path = config.SLAM_SETTINGS_PATH
         assert os.path.isfile(self.slam_settings_path)
@@ -609,15 +614,20 @@ def main():
     config = get_config()
     agent_config = cfg_baseline()
     config.defrost()
-    config.BASELINE = agent_config.BASELINE
+    #import pdb
+    #`pdb.set_trace()
+    #config.BASELINE = agent_config.BASELINE
+    config.ORBSLAM2 = agent_config.ORBSLAM2
     make_good_config_for_orbslam2(config)
 
+    print(args)
+    pdb.set_trace()
     if args.agent_type == "blind":
-        agent = BlindAgent(config.TRAINER.ORBSLAM2)
+        agent = BlindAgent(config.ORBSLAM2)
     elif args.agent_type == "orbslam2-rgbd":
-        agent = ORBSLAM2Agent(config.TRAINER.ORBSLAM2)
+        agent = ORBSLAM2Agent(config.ORBSLAM2)
     elif args.agent_type == "orbslam2-rgb-monod":
-        agent = ORBSLAM2MonodepthAgent(config.TRAINER.ORBSLAM2)
+        agent = ORBSLAM2MonodepthAgent(config.ORBSLAM2)
     else:
         raise ValueError(args.agent_type, "is unknown type of agent")
     benchmark = habitat.Benchmark(args.task_config)
