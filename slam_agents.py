@@ -20,7 +20,7 @@ import torch
 import torch.nn.functional as F
 
 import habitat
-from habitat.config.default import get_config
+from default1 import get_config
 from habitat.sims.habitat_simulator.actions import HabitatSimActions
 from default import get_config as cfg_baseline
 from habitat_baselines.slambased.mappers import DirectDepthMapper
@@ -619,8 +619,7 @@ def main():
     #config.BASELINE = agent_config.BASELINE
     config.ORBSLAM2 = agent_config.ORBSLAM2
     make_good_config_for_orbslam2(config)
-
-    print(args)
+    
     pdb.set_trace()
     if args.agent_type == "blind":
         agent = BlindAgent(config.ORBSLAM2)
