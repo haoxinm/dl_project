@@ -19,9 +19,9 @@ import torch
 import torch.nn.functional as F
 
 import habitat
-from default import get_config
+from habitat.config.default import get_config
 from habitat.sims.habitat_simulator.actions import HabitatSimActions
-from habitat_baselines.config.default import get_config as cfg_baseline
+from default import get_config as cfg_baseline
 from habitat_baselines.slambased.mappers import DirectDepthMapper
 from habitat_baselines.slambased.monodepth import MonoDepthEstimator
 from habitat_baselines.slambased.path_planners import DifferentiableStarPlanner
