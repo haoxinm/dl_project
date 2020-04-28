@@ -128,9 +128,9 @@ class PPOReplayTrainer(PPOTrainer):
                 param.requires_grad_(False)
 
         if self.config.RL.PPO.reset_critic:
-            self.actor_critic.critic.reset()
-            # nn.init.orthogonal_(self.actor_critic.critic.fc.weight)
-            # nn.init.constant_(self.actor_critic.critic.fc.bias, 0)
+            # self.actor_critic.critic.reset()
+            nn.init.orthogonal_(self.actor_critic.critic.fc.weight)
+            nn.init.constant_(self.actor_critic.critic.fc.bias, 0)
 
         self.agent = PPODistributed(
             actor_critic=self.actor_critic,
@@ -177,22 +177,25 @@ class PPOReplayTrainer(PPOTrainer):
         best_actions = torch.tensor(self.envs.call(["get_best_action"] * self.envs.num_envs),
                                     device=actions.device)
         # tf = False
-        # if np.random.random() < 1. - (update / self.config.NUM_TF_UPDATES) * \
-        #         (update > 2 * self.config.NUM_REPLAY_UPDATES):
-        #     # tf = True
-        #     actions = best_actions
+        if np.random.random() < 1. - (update / self.config.NUM_TF_UPDATES) * \
+                (update > 2 * self.config.NUM_REPLAY_UPDATES):
+            # tf = True
+            actions = best_actions
         # else:
-        action_list = [HabitatSimActions.MOVE_FORWARD, HabitatSimActions.TURN_LEFT, HabitatSimActions.TURN_RIGHT]
+        # action_list = [HabitatSimActions.MOVE_FORWARD, HabitatSimActions.TURN_LEFT, HabitatSimActions.TURN_RIGHT]
         punishment = torch.zeros(actions.shape)
         if update < self.config.NUM_TAMER_UPDATES // 2:
             for i in range(self.envs.num_envs):
-                if step_observation[self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID][i][0] > \
-                        self.config.TASK_CONFIG.TASK.SUCCESS_DISTANCE and \
-                        actions[i] == HabitatSimActions.STOP:
-                    if np.random.random() < 0.5 * (1 - update < self.config.NUM_TAMER_UPDATES // 2):
-                        actions[i] = torch.tensor(np.random.choice(action_list), dtype=actions.dtype, device=actions.device)
-                    else:
-                        punishment[i] = torch.tensor(self.config.RL.EARLY_STOP_PUNISHMENT)
+                if (step_observation[self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID][i][0] >
+                        self.config.TASK_CONFIG.TASK.SUCCESS_DISTANCE and
+                        actions[i] == HabitatSimActions.STOP) or \
+                        (step_observation[self.config.TASK_CONFIG.TASK.GOAL_SENSOR_UUID][i][0] <
+                        self.config.TASK_CONFIG.TASK.SUCCESS_DISTANCE and
+                        actions[i] != HabitatSimActions.STOP):
+                    # if np.random.random() < 0.5 * (1 - update < self.config.NUM_TAMER_UPDATES // 2):
+                    #     actions[i] = torch.tensor(np.random.choice(action_list), dtype=actions.dtype, device=actions.device)
+                    # else:
+                    punishment[i] = torch.tensor(self.config.RL.EARLY_STOP_PUNISHMENT)
         tamer_rewards = (2 * (actions == best_actions) - 1) * self.config.RL.TAMER_REWARD
         outputs = self.envs.step([a[0].item() for a in actions])
         observations, rewards, dones, infos = [list(x) for x in zip(*outputs)]

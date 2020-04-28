@@ -1,5 +1,5 @@
 BASE_TASK_CONFIG_PATH: "train_pointnav2020.rgbd.yaml"
-TRAINER_NAME: "ppo_replay"
+TRAINER_NAME: "ddppo_tamer"
 ENV_NAME: "DLProjectRLENV"
 SIMULATOR_GPU_ID: 0
 TORCH_GPU_ID: 0
@@ -8,38 +8,36 @@ TENSORBOARD_DIR: "tb"
 VIDEO_DIR: "video_dir"
 TEST_EPISODE_COUNT: 994
 EVAL_CKPT_PATH_DIR: "data/new_checkpoints"
-NUM_PROCESSES: 4
-SENSORS: ['RGB_SENSOR', "DEPTH_SENSOR"]
+NUM_PROCESSES: 5
+SENSORS: ["DEPTH_SENSOR"]
 CHECKPOINT_FOLDER: "data/new_checkpoints"
+NUM_UPDATES: 10000
 NUM_DEMO_UPDATES: 0
-NUM_UPDATES: 130000
-NUM_TF_UPDATES: 13
-NUM_TAMER_UPDATES: 2600
-NUM_REPLAY_UPDATES: 16
+NUM_TF_UPDATES: 0
+NUM_TAMER_UPDATES: 130
+NUM_REPLAY_UPDATES: 0
 REPLAY_INTERVAL: 0
-REPLAY_MEMORY_SIZE: 1
-LOG_INTERVAL: 32
-CHECKPOINT_INTERVAL: 260
+REPLAY_MEMORY_SIZE: 0
+LOG_INTERVAL: 10
+CHECKPOINT_INTERVAL: 50
 FP16: False
 
 RL:
-  SUCCESS_REWARD: 10.
-  COLLISION_REWARD: -0.
-  TAMER_REWARD: 0.5
-  EARLY_STOP_PUNISHMENT: -2.5
+  SUCCESS_REWARD: 5.
+  COLLISION_REWARD: -0.01
+  TAMER_REWARD: 0.1
+  EARLY_STOP_PUNISHMENT: 0.36
   PPO:
-    PRETRAINED: True
-    FINETUNE: False
     # ppo params
     clip_param: 0.2
-    ppo_epoch: 4
-    num_mini_batch: 2
+    ppo_epoch: 2
+    num_mini_batch: 5
     value_loss_coef: 0.5
     entropy_coef: 0.01
     lr: 2.5e-4
     eps: 1e-5
     max_grad_norm: 0.2
-    num_steps: 128
+    num_steps: 112
     use_gae: True
     gamma: 0.99
     tau: 0.95
@@ -50,10 +48,16 @@ RL:
     use_normalized_advantage: False
 
     hidden_size: 512
+
+  DDPPO:
+    sync_frac: 0.6
+    # The PyTorch distributed backend to use
+    distrib_backend: NCCL
     # Visual encoder backbone
-    pretrained_weights: None
+    pretrained_weights: data/new_checkpoints/ckpt.0.pth
     # Initialize with pretrained weights
-    pretrained_actor: False
+    pretrained: False
+    finetune: False
     # Initialize just the visual encoder backbone with pretrained weights
     pretrained_encoder: False
     # Whether or not the visual encoder backbone will be trained.
@@ -62,6 +66,6 @@ RL:
     reset_critic: True
 
     # Model parameters
-    backbone: efficientnet-b3
+    backbone: efficientnet-b0
     rnn_type: LSTM
-    num_recurrent_layers: 1
+    num_recurrent_layers: 2

@@ -1,10 +1,10 @@
 ENVIRONMENT:
-  MAX_EPISODE_STEPS: 500
+  MAX_EPISODE_STEPS: 250
   ITERATOR_OPTIONS:
     SHUFFLE: False
 SIMULATOR:
   AGENT_0:
-    SENSORS: ['RGB_SENSOR', 'DEPTH_SENSOR']
+    SENSORS: ['DEPTH_SENSOR']
     HEIGHT: 0.88
     RADIUS: 0.18
   HABITAT_SIM_V0:
@@ -15,9 +15,9 @@ SIMULATOR:
     HEIGHT: 360
     HFOV: 70
     POSITION: [0, 0.88, 0]
-#    NOISE_MODEL: "GaussianNoiseModel"
-#    NOISE_MODEL_KWARGS:
-#      intensity_constant: 0.1
+    NOISE_MODEL: "GaussianNoiseModel"
+    NOISE_MODEL_KWARGS:
+      intensity_constant: 0.1
 
   DEPTH_SENSOR:
     WIDTH: 640
@@ -26,7 +26,7 @@ SIMULATOR:
     MIN_DEPTH: 0.1
     MAX_DEPTH: 10.0
     POSITION: [0, 0.88, 0]
-#    NOISE_MODEL: "RedwoodDepthNoiseModel"
+    NOISE_MODEL: "RedwoodDepthNoiseModel"
 
   ACTION_SPACE_CONFIG: 'pyrobotnoisy'
   NOISE_MODEL:
@@ -37,11 +37,11 @@ SIMULATOR:
 TASK:
   TYPE: Nav-v0
   SUCCESS_DISTANCE: 0.36
-  SENSORS: ['POINTGOAL_WITH_GPS_COMPASS_SENSOR', 'HEADING_SENSOR']
+  SENSORS: ['POINTGOAL_SENSOR', 'POINTGOAL_WITH_GPS_COMPASS_SENSOR', 'HEADING_SENSOR']
   POINTGOAL_SENSOR:
     GOAL_FORMAT: POLAR
     DIMENSIONALITY: 2
-  GOAL_SENSOR_UUID: pointgoal_with_gps_compass
+  GOAL_SENSOR_UUID: pointgoal
   MEASUREMENTS: ['DISTANCE_TO_GOAL', "SUCCESS", 'SPL', 'TOP_DOWN_MAP', 'COLLISIONS']
   TOP_DOWN_MAP:
     MAP_RESOLUTION: 4096
@@ -50,6 +50,6 @@ TASK:
 
 DATASET:
   TYPE: PointNav-v1
-  SPLIT: train
+  SPLIT: val
   DATA_PATH: data/pointnav_gibson_v2/{split}/{split}.json.gz
   SCENES_DIR: "data/scene_data/"

@@ -127,7 +127,7 @@ class PointNavEfficientNetPolicy(Policy):
         finetune=True,
     ):
         super().__init__(
-            PointNavEfficientNetNet(
+            PointNavEfficientNetGPSNet(
                 observation_space=observation_space,
                 action_space=action_space,
                 goal_sensor_uuid=goal_sensor_uuid,
@@ -143,6 +143,85 @@ class PointNavEfficientNetPolicy(Policy):
         )
         # self.action_distribution = LSTMCategorical(self.net.output_size, self.dim_actions)
         # self.critic = LSTMHead(self.net.output_size)
+
+
+class PointNavEfficientNetGPSPolicy(Policy):
+    def __init__(
+        self,
+        observation_space,
+        action_space,
+        goal_sensor_uuid="pointgoal",
+        hidden_size=512,
+        num_recurrent_layers=2,
+        rnn_type="LSTM",
+        backbone="efficientnet-b7",
+        normalize_visual_inputs=False,
+        pretrained=None,
+        finetune=True,
+    ):
+        super().__init__(
+            PointNavEfficientNetGPSNet(
+                observation_space=observation_space,
+                action_space=action_space,
+                goal_sensor_uuid=goal_sensor_uuid,
+                hidden_size=hidden_size,
+                num_recurrent_layers=num_recurrent_layers,
+                rnn_type=rnn_type,
+                backbone=backbone,
+                normalize_visual_inputs=normalize_visual_inputs,
+                pretrained=pretrained,
+                finetune=finetune,
+            ),
+            action_space.n,
+        )
+        # self.action_distribution = LSTMCategorical(self.net.output_size, self.dim_actions)
+        # self.critic = LSTMHead(self.net.output_size)
+
+    def act(
+            self,
+            observations,
+            prev_obs,
+            rnn_hidden_states,
+            prev_actions,
+            masks,
+            deterministic=False,
+            gps=None,
+            prev_gps=None,
+    ):
+        features, rnn_hidden_states, gps_predict = self.net(
+            observations, prev_obs, rnn_hidden_states, prev_actions, masks, gps, prev_gps
+        )
+        distribution = self.action_distribution(features)
+        value = self.critic(features)
+
+        if deterministic:
+            action = distribution.mode()
+        else:
+            action = distribution.sample()
+
+        action_log_probs = distribution.log_probs(action)
+
+        return value, action, action_log_probs, rnn_hidden_states, gps_predict
+
+    def get_value(self, observations, prev_obs, rnn_hidden_states, prev_actions, masks, gps=None, prev_gps=None):
+        features, _, _ = self.net(
+            observations, prev_obs, rnn_hidden_states, prev_actions, masks, gps, prev_gps
+        )
+        return self.critic(features)
+
+    def evaluate_actions(
+            self, observations, prev_obs, rnn_hidden_states, prev_actions, masks, action, gps=None, prev_gps=None
+    ):
+        features, rnn_hidden_states, _ = self.net(
+            observations, prev_obs, rnn_hidden_states, prev_actions, masks, gps, prev_gps,
+        )
+        distribution = self.action_distribution(features)
+        value = self.critic(features)
+
+        action_log_probs = distribution.log_probs(action.to(features.device))
+        distribution_entropy = distribution.entropy().mean()
+
+        return value, action_log_probs, distribution_entropy, rnn_hidden_states
 
 
 class EfficientNetEncoder(nn.Module):
@@ -205,6 +284,7 @@ class EfficientNetEncoder(nn.Module):
             # permute tensor to dimension [BATCH x CHANNEL x HEIGHT X WIDTH]
             rgb_observations = rgb_observations.permute(0, 3, 1, 2)
             rgb_observations = rgb_observations / 255.0  # normalize RGB
+            rgb_observations = F.avg_pool2d(rgb_observations, 2)
             cnn_input.append(rgb_observations)
 
         if self._n_input_depth > 0:
@@ -212,6 +292,7 @@ class EfficientNetEncoder(nn.Module):
 
             # permute tensor to dimension [BATCH x CHANNEL x HEIGHT X WIDTH]
             depth_observations = depth_observations.permute(0, 3, 1, 2)
+            depth_observations = F.avg_pool2d(depth_observations, 2)
             cnn_input.append(depth_observations)
 
         x = torch.cat(cnn_input, dim=1)
@@ -222,6 +303,137 @@ class EfficientNetEncoder(nn.Module):
         x = x.to(device)
         x = self.backbone(x)
         return x
+
+
+class PointNavEfficientNetGPSNet(Net):
+    """Network which passes the input image through CNN and concatenates
+    goal vector with CNN's output and passes that through RNN.
+    """
+
+    def __init__(
+        self,
+        observation_space,
+        action_space,
+        goal_sensor_uuid,
+        hidden_size,
+        num_recurrent_layers,
+        rnn_type,
+        backbone,
+        normalize_visual_inputs,
+        pretrained=False,
+        finetune=False,
+    ):
+        super().__init__()
+        self.goal_sensor_uuid = goal_sensor_uuid
+
+        self.prev_action_embedding = nn.Embedding(action_space.n + 1, 32)
+        self._n_prev_action = 32
+
+        self._n_input_gps = (
+            hidden_size * 2 + observation_space.spaces[self.goal_sensor_uuid].shape[0]
+        )
+        self.gps_predict = nn.Sequential(
+            nn.Linear(self._n_input_gps, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 2)
+        )
+
+        self._n_input_goal = (
+            observation_space.spaces[self.goal_sensor_uuid].shape[0] + 1
+        )
+        self.tgt_embeding = nn.Linear(self._n_input_goal, 32)
+        self._n_input_goal = 32
+
+        # self._n_input_action_goal = action_space.n + \
+        #                            observation_space.spaces[self.goal_sensor_uuid].shape[0] + \
+        #                            2
+        # self.goal_action_embedding = nn.Linear(self._n_input_action_goal, 32)
+        # self._n_input_action_goal = 32
+
+        self._hidden_size = hidden_size
+
+        rnn_input_size = self._n_input_goal + self._n_prev_action
+        self.visual_encoder = EfficientNetEncoder(
+            observation_space,
+            hidden_size=hidden_size,
+            backbone_name=backbone,
+            pretrained=pretrained,
+            finetune=finetune,
+            normalize_visual_inputs=normalize_visual_inputs,
+        )
+
+        self.state_encoder = RNNStateEncoder(
+            (0 if self.is_blind else self._hidden_size) + rnn_input_size,
+            self._hidden_size,
+            rnn_type=rnn_type,
+            num_layers=num_recurrent_layers,
+        )
+
+        # self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        self.train()
+
+    @property
+    def output_size(self):
+        return self._hidden_size
+
+    @property
+    def is_blind(self):
+        return self.visual_encoder.is_blind
+
+    @property
+    def num_recurrent_layers(self):
+        return self.state_encoder.num_recurrent_layers
+
+    # '''
+    def get_tgt_encoding(self, goal_observations):
+        # print(torch.sum(goal_observations**2))
+        goal_observations = torch.stack(
+            [
+                goal_observations[:, 0],
+                torch.cos(-goal_observations[:, 1]),
+                torch.sin(-goal_observations[:, 1]),
+            ],
+            -1,
+        )
+        device = next(self.tgt_embeding.parameters()).device
+
+        return self.tgt_embeding(goal_observations.to(device))
+    # '''
+
+    def forward(self, observations, prev_obs, rnn_hidden_states, prev_actions, masks, gps=None, prev_gps=None):
+        x = []
+        if not self.is_blind:
+            if "visual_features" in observations:
+                visual_feats = observations["visual_features"]
+            else:
+                visual_feats = self.visual_encoder(observations)
+
+            x.append(visual_feats)
+        device = next(self.prev_action_embedding.parameters()).device
+        prev_actions = prev_actions.to(device)
+        masks = masks.to(device)
+        prev_actions = ((prev_actions.float() + 1) * masks)
+        prev_actions = self.prev_action_embedding(prev_actions.long().squeeze(-1))
+        prev_gps = observations[self.goal_sensor_uuid] if prev_gps is None else prev_gps
+        prev_obs = self.visual_encoder(prev_obs)
+        features = x + [prev_obs, prev_gps]
+        features = torch.cat(features, dim=1)
+        gps_predict = self.gps_predict(features)
+        gps_predict = prev_gps + gps_predict
+        goal_observations = gps_predict if gps is None else gps
+        tgt_encoding = self.get_tgt_encoding(goal_observations)
+        # x += [tgt_encoding, prev_actions]
+        x += [tgt_encoding, prev_actions]
+        x = torch.cat(x, dim=1)
+        device = next(self.state_encoder.parameters()).to(device)
+        x = x.to(device)
+        rnn_hidden_states = rnn_hidden_states.to(device)
+        masks = masks.to(device)
+        x, rnn_hidden_states = self.state_encoder(x, rnn_hidden_states, masks)
+
+        return x, rnn_hidden_states, gps_predict
 
 
 class PointNavEfficientNetNet(Net):
