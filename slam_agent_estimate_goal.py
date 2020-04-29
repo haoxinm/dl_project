@@ -319,7 +319,7 @@ class ORBSLAM2Agent(RandomAgent):
         new_target_distance = initial_target_distance - distance_to_initial
         
         new_target_distance_val = sqrt(new_target_distance[0] * new_target_distance[0] + new_target_distance[1] * new_target_distance[1])
-        return [new_target_distance, estimate_angle]
+        return [new_target_distance_val, estimate_angle]
         
     def act(self, habitat_observation, random_prob=0.1):
         # Update internal state
