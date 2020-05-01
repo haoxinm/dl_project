@@ -157,10 +157,10 @@ class EfficientNetEncoder(nn.Module):
     ):
         super().__init__()
 
-        if "rgb" in observation_space.spaces:
-            self._n_input_rgb = observation_space.spaces["rgb"].shape[2]
-        else:
-            self._n_input_rgb = 0
+        # if "rgb" in observation_space.spaces:
+        #     self._n_input_rgb = observation_space.spaces["rgb"].shape[2]
+        # else:
+        self._n_input_rgb = 0
 
         if "depth" in observation_space.spaces:
             self._n_input_depth = observation_space.spaces["depth"].shape[2]
@@ -251,6 +251,11 @@ class PointNavEfficientNetNet(Net):
         self._n_input_goal = (
             observation_space.spaces[self.goal_sensor_uuid].shape[0] + 1
         )
+        # self.tgt_embeding = nn.Sequential(
+        #     nn.Linear(self._n_input_goal, 32),
+        #     nn.ReLU(),
+        #     nn.Linear(32, 32)
+        # )
         self.tgt_embeding = nn.Linear(self._n_input_goal, 32)
         self._n_input_goal = 32
 

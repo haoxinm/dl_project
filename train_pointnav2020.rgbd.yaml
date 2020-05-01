@@ -15,9 +15,9 @@ SIMULATOR:
     HEIGHT: 360
     HFOV: 70
     POSITION: [0, 0.88, 0]
-#    NOISE_MODEL: "GaussianNoiseModel"
-#    NOISE_MODEL_KWARGS:
-#      intensity_constant: 0.1
+    NOISE_MODEL: "GaussianNoiseModel"
+    NOISE_MODEL_KWARGS:
+      intensity_constant: 0.1
 
   DEPTH_SENSOR:
     WIDTH: 640
@@ -26,7 +26,7 @@ SIMULATOR:
     MIN_DEPTH: 0.1
     MAX_DEPTH: 10.0
     POSITION: [0, 0.88, 0]
-#    NOISE_MODEL: "RedwoodDepthNoiseModel"
+    NOISE_MODEL: "RedwoodDepthNoiseModel"
 
   ACTION_SPACE_CONFIG: 'pyrobotnoisy'
   NOISE_MODEL:
@@ -41,7 +41,7 @@ TASK:
   POINTGOAL_SENSOR:
     GOAL_FORMAT: POLAR
     DIMENSIONALITY: 2
-  GOAL_SENSOR_UUID: pointgoal_with_gps_compass
+  GOAL_SENSOR_UUID: pointgoal
   MEASUREMENTS: ['DISTANCE_TO_GOAL', "SUCCESS", 'SPL', 'TOP_DOWN_MAP', 'COLLISIONS']
   TOP_DOWN_MAP:
     MAP_RESOLUTION: 4096

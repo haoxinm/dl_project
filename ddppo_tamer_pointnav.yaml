@@ -1,4 +1,4 @@
-BASE_TASK_CONFIG_PATH: "train_pointnav2020.rgbd.yaml"
+BASE_TASK_CONFIG_PATH: "/root/dl_project/train_pointnav2020.rgbd.yaml"
 TRAINER_NAME: "ddppo_tamer"
 ENV_NAME: "DLProjectRLENV"
 SIMULATOR_GPU_ID: 0

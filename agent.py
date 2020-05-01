@@ -17,11 +17,11 @@ from habitat.core.agent import Agent
 from efficientnet_policy import PointNavEfficientNetPolicy
 
 from slam_tracker import SLAM_TRACKER
-
+import sys
 def get_defaut_config():
     c = Config()
     c.INPUT_TYPE = "depth"
-    c.MODEL_PATH = "data/new_checkpoints/noisy.pth"
+    c.MODEL_PATH = "/root/dl_project/data/new_checkpoints/noisy.pth"
     c.RL.PPO.hidden_size = 512
     c.RANDOM_SEED = 7
     c.TORCH_GPU_ID = 0
@@ -83,7 +83,7 @@ class EfficientNetAgent(Agent):
         self.actor_critic.to(self.device)
 
         if config.MODEL_PATH:
-            ckpt = torch.load(config.MODEL_PATH, map_location=self.device)
+            ckpt = torch.load('/root/dl_project/noisy.pth', map_location=self.device)
             #  Filter only actor_critic weights
             self.actor_critic.load_state_dict(
                 {
@@ -117,12 +117,11 @@ class EfficientNetAgent(Agent):
         self._slam_reset = True
 
     def act(self, observations):
-        self._slam_tracker.update(observation, action)
-         self._slam_reset == True:
+        if self._slam_reset == True:
             self._slam_reset = False
 
         else:
-            observation['pointgoal'] =  self._slam_tracker.get_estimate_goal(observation)
+            observations['pointgoal'] =  self._slam_tracker.get_estimate_goal(observations)
 
         batch = batch_obs([observations])
         for sensor in batch:
@@ -139,6 +138,8 @@ class EfficientNetAgent(Agent):
             #  Make masks not done till reset (end of episode) will be called
             self.not_done_masks = torch.ones(1, 1, device=self.device)
             self.prev_actions.copy_(actions)
+        self._slam_tracker.update(observations, actions[0][0].item())
+
         return actions[0][0].item()
 
 
@@ -153,14 +154,12 @@ def main():
     config_paths = os.environ["CHALLENGE_CONFIG_FILE"]
     parser.add_argument("--model-path", default="", type=str)
     args = parser.parse_args()
-
-    config = get_config('ddppo_tamer_pointnav.yaml',
+    config = get_config('/root/dl_project/ddppo_tamer_pointnav.yaml',
                 ['BASE_TASK_CONFIG_PATH', config_paths]).clone()
     config.defrost()
     config.TORCH_GPU_ID = 0
     config.INPUT_TYPE = args.input_type
     config.MODEL_PATH = args.model_path
-
     config.RANDOM_SEED = 7
     config.freeze()
 
