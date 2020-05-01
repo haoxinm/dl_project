@@ -1,0 +1,11 @@
+prefix=/root/dl_project/habitat-api/habitat_baselines/slambased/3rdparty/glew_installed
+exec_prefix=${prefix}
+libdir=/root/dl_project/habitat-api/habitat_baselines/slambased/3rdparty/glew_installed/lib
+includedir=${prefix}/include
+
+Name: glew
+Description: The OpenGL Extension Wrangler library
+Version: 2.1.0
+Cflags: -I${includedir} 
+Libs: -L${libdir} -lGLEW
+Requires: glu
