@@ -10,7 +10,7 @@ visdom
 ipdb
 sacred
 matplotlib
-tensorflow==1.15.2  # not sure if really needed
+tensorflow==2.9.3  # not sure if really needed
 psutil
 sklearn
 tensorboard==1.15
